@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/passm-crypto",
+    "crates/passm-vault",
+    "crates/passm-sync",
+    "crates/passm-cli",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.77.2"
+
+[workspace.dependencies]
+# git2 0.21: default = [] upstream, https must be explicit or PAT auth over https fails.
+# vendored-libgit2 + vendored-openssl: builds libgit2/openssl from source, no system deps.
+git2 = { version = "0.21", features = ["vendored-libgit2", "vendored-openssl", "https"] }
+chacha20poly1305 = "0.11"
+argon2 = "0.5"
+hkdf = "0.13"
+keyring = "4.1"
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
+zeroize = "1"
+rand = "0.8"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

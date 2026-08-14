@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "active_work_id": "passm-94437172",
+  "works": {
+    "passm-94437172": {
+      "work_id": "passm-94437172",
+      "active_plan": "/home/ubuntu/passm/.omo/plans/passm.md",
+      "plan_name": "passm",
+      "status": "active",
+      "started_at": "2026-08-14T07:35:49.042Z",
+      "updated_at": "2026-08-14T07:35:49.042Z",
+      "session_ids": [
+        "opencode:ses_000f8aec6ffeAryYDI06LicscV"
+      ],
+      "session_origins": {
+        "opencode:ses_000f8aec6ffeAryYDI06LicscV": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    }
+  },
+  "active_plan": "/home/ubuntu/passm/.omo/plans/passm.md",
+  "started_at": "2026-08-14T07:35:49.042Z",
+  "status": "active",
+  "updated_at": "2026-08-14T07:35:49.042Z",
+  "session_ids": [
+    "opencode:ses_000f8aec6ffeAryYDI06LicscV"
+  ],
+  "session_origins": {
+    "opencode:ses_000f8aec6ffeAryYDI06LicscV": "direct"
+  },
+  "plan_name": "passm",
+  "task_sessions": {},
+  "agent": "atlas"
+}

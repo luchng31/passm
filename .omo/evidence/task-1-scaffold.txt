@@ -1,0 +1,51 @@
+=== T1: Workspace scaffold + git2-on-Linux proof ===
+Date: 2026-08-14T08:47:11Z
+
+=== cargo build --workspace (tail) ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+=== cargo tree -i git2 (features) ===
+git2 v0.21.0
+├── git2 feature "cred"
+│   └── git2 feature "https"
+│       └── passm-sync v0.1.0 (/home/ubuntu/passm/crates/passm-sync)
+│           └── passm-sync feature "default" (command-line)
+│               └── passm-cli v0.1.0 (/home/ubuntu/passm/crates/passm-cli)
+│                   └── passm-cli feature "default" (command-line)
+├── git2 feature "default"
+│   └── passm-sync v0.1.0 (/home/ubuntu/passm/crates/passm-sync) (*)
+├── git2 feature "https" (*)
+├── git2 feature "openssl-probe"
+│   └── git2 feature "https" (*)
+├── git2 feature "openssl-sys"
+│   ├── git2 feature "https" (*)
+│   └── git2 feature "vendored-openssl"
+│       └── passm-sync v0.1.0 (/home/ubuntu/passm/crates/passm-sync) (*)
+├── git2 feature "vendored-libgit2"
+│   └── passm-sync v0.1.0 (/home/ubuntu/passm/crates/passm-sync) (*)
+└── git2 feature "vendored-openssl" (*)
+
+=== cargo test --workspace ===
+     Running unittests src/lib.rs (target/debug/deps/passm_app-39fb6fc936d2289f)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs (target/debug/deps/passm_cli-f808c6b077d680ce)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/passm_crypto-59180431cf4941db)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/passm_sync-b72be7b8dc7caacd)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/passm_vault-dc7a2752a6e9e161)
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
