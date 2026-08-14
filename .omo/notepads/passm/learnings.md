@@ -22,3 +22,12 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - `cargo build --workspace` stays green with src-tauri as a plain crate (no webkit2gtk needed) — T11 will flip it to real Tauri.
 - Recipe confirmed: `git2 = { version = "0.21", features = ["vendored-libgit2", "vendored-openssl", "https"] }` works on Ubuntu 24.04 with cmake 4.4.2 at ~/.local/bin.
 - Evidence: .omo/evidence/task-1-scaffold.txt
+
+## [2026-08-14] T4 done: passm-vault Entry/Vault models + canonical JSON
+- `Entry`/`Vault` in crates/passm-vault/src/lib.rs with serde derive; struct field order = stable JSON key order. `canonical_json()` sorts entries by id → byte-stable output for T5 merge convergence proof.
+- **uuid workspace dep needs `features = ["serde"]`** for `Uuid` to implement Serialize/Deserialize — added at the member level (`uuid = { workspace = true, features = ["serde"] }`); features union with the workspace dep, no workspace manifest change needed.
+- serde_json is NOT in the workspace pinned list → added as plain `serde_json = "1"` in passm-vault's own [dependencies] (acceptable per plan).
+- Timestamps are i64 unix secs via `SystemTime::now().duration_since(UNIX_EPOCH)` — no `time` crate needed.
+- `canonical_json` uses `.expect()` on a provably-infallible serialization (Vault = only Uuid/String/u64/i64/bool, no maps) to satisfy the `-> Vec<u8>` signature; documented in evidence.
+- TDD flow: tests first (RED: 25 compile errors), then impl (GREEN: 8/8). Clippy `-D warnings` clean.
+- Evidence: .omo/evidence/task-4-vault.txt

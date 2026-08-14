@@ -1,0 +1,41 @@
+=== T4: passm-vault Entry/Vault models + canonical JSON ===
+Date: 2026-08-14T16:52:00Z
+
+=== cargo test -p passm-vault ===
+test tests::bump_increments_version_and_refreshes_updated_at ... ok
+test tests::canonical_json_is_byte_stable_across_entry_order ... ok
+test tests::canonical_json_sorts_entries_by_id ... ok
+test tests::empty_vault_serializes_to_empty_entries ... ok
+test tests::mark_deleted_sets_tombstone ... ok
+test tests::serde_roundtrip_preserves_entry ... ok
+test tests::new_sets_defaults ... ok
+test tests::serde_roundtrip_preserves_vault ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+=== cargo clippy -p passm-vault -- -D warnings ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+(no warnings)
+
+=== Model (crates/passm-vault/src/lib.rs) ===
+Entry { id: Uuid, title, username, password, url, notes, version: u64,
+        device_id, created_at: i64, updated_at: i64, deleted: bool }
+Vault { entries: Vec<Entry> }
+- serde derive on both; struct field order = stable JSON key order.
+- Entry::new(...) -> version=1, created_at/updated_at=now (SystemTime unix secs),
+  deleted=false, id=Uuid::new_v4().
+- Entry::bump() -> version+=1, updated_at=now.
+- Entry::mark_deleted() -> deleted=true (tombstone).
+- Vault::empty() -> {"entries":[]} (first-run bootstrap).
+- Vault::canonical_json() -> Vec<u8>: serde_json::to_vec of a Vault whose
+  entries are sorted by id (stable byte output for T5 merge convergence).
+- No HashMap anywhere in serialization; timestamps are i64 unix secs, not String.
+
+=== Notes ===
+- uuid workspace dep needed features=["serde"] (added in passm-vault/Cargo.toml)
+  for Uuid to implement Serialize/Deserialize.
+- serde_json = "1" added as plain dep (not in workspace pinned list).
+- canonical_json uses .expect() on a provably-infallible serialization
+  (Vault contains only Uuid/String/u64/i64/bool — no maps/custom serializers);
+  required to satisfy the -> Vec<u8> signature without a panic on real errors.
+- TDD: tests written first (RED: 25 compile errors, Entry/Vault undeclared),
+  then implemented (GREEN: 8/8 pass).

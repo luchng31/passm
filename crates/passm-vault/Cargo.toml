@@ -7,5 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 serde.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["serde"] }
 zeroize.workspace = true
+# serde_json is not a workspace dep; needed for canonical_json byte output.
+serde_json = "1"
