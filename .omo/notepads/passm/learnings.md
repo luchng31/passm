@@ -31,3 +31,12 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - `canonical_json` uses `.expect()` on a provably-infallible serialization (Vault = only Uuid/String/u64/i64/bool, no maps) to satisfy the `-> Vec<u8>` signature; documented in evidence.
 - TDD flow: tests first (RED: 25 compile errors), then impl (GREEN: 8/8). Clippy `-D warnings` clean.
 - Evidence: .omo/evidence/task-4-vault.txt
+
+## [2026-08-14] T2 done: passm-crypto Argon2id + HKDF key derivation with golden vectors
+- `KdfParams { mem_kib: 65536, iterations: 3, parallelism: 4 }` (serde derive + Default), `derive_master_key(password, salt: &[u8;32], params) -> Result<[u8;32]>` via argon2 0.5 `Algorithm::Argon2id` + `Version::V0x13`, `derive_vault_key(master) -> [u8;32]` via hkdf 0.13 HKDF-SHA256 salt=None info=`b"passm-v1-vault-key"` L=32.
+- **sha2 was NOT in the workspace pinned list but is REQUIRED**: hkdf 0.13's `Hkdf<H>` needs a concrete hash type, and hkdf only depends on `hmac`. Added `sha2 = "0.11"` to workspace.dependencies — **must be 0.11, NOT 0.10**: hmac 0.13 uses digest 0.11, sha2 0.10 uses digest 0.10 → `Hkdf::<Sha256>` fails to compile with a wall of trait-bound errors. This is the same "make transitive dep direct" pattern as T4's serde_json.
+- `derive_vault_key` returns `[u8;32]` (not Result) per spec; HKDF expand with L=32 is statically infallible (max 255*32 bytes) → handled with `match` + `unreachable!` + `# Panics` doc, not unwrap.
+- zeroize: password copied to owned `Vec<u8>`, zeroized after derive; master zeroized on error path.
+- Golden vector frozen in test: password=`b"correct horse battery staple"`, salt=`[0x42;32]`, default params → master `[234,233,121,...]`, vault `[183,240,204,...]`. QA: mutating a constant byte → test FAILED → reverted.
+- TDD flow: RED (23 compile errors, functions missing) → GREEN (5/6, golden placeholder red) → freeze real values (6/6). Clippy `-D warnings` clean.
+- Evidence: .omo/evidence/task-2-kdf.txt

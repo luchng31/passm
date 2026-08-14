@@ -21,6 +21,9 @@ git2 = { version = "0.21", features = ["vendored-libgit2", "vendored-openssl", "
 chacha20poly1305 = "0.11"
 argon2 = "0.5"
 hkdf = "0.13"
+# sha2 is required to name Hkdf::<Sha256> (hkdf 0.13 only depends on hmac; the hash type is the caller's).
+# 0.11 to match hmac 0.13's digest 0.11 (sha2 0.10 uses digest 0.10 and is incompatible).
+sha2 = "0.11"
 keyring = "4.1"
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }

@@ -1,0 +1,31 @@
+=== T2 evidence: passm-crypto key derivation (Argon2id + HKDF) ===
+date: 2026-08-14T08:55:43Z
+commit-before: de13b1c
+
+=== cargo test -p passm-crypto ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/debug/deps/passm_crypto-29d9a62c10ae6e69)
+
+running 6 tests
+test tests::kdf_params_default_is_64mib_3_4 ... ok
+test tests::vault_key_matches_independent_hkdf ... ok
+test tests::golden_vector_master_and_vault_key ... ok
+test tests::wrong_password_yields_different_master_key ... ok
+test tests::wrong_params_yield_different_master_key ... ok
+test tests::wrong_salt_yields_different_master_key ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.64s
+
+   Doc-tests passm_crypto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+=== cargo clippy -p passm-crypto -- -D warnings ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+=== QA: mutate golden constant -> test fails (proven during TDD) ===
+mutated GOLDEN_MASTER_KEY[0] 234->0: golden_vector_master_and_vault_key FAILED
+reverted: all 6 tests green again
