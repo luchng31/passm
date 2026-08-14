@@ -3,3 +3,6 @@
 /dist
 *.local
 gen/android/**/build
+
+# opencode session continuation artifacts
+.omo/run-continuation/
