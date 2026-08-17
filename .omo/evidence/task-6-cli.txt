@@ -1,0 +1,98 @@
+T6: passm-cli core command-line harness (golden vectors + verification seam)
+============================================================================
+Date: 2026-08-17
+Status: DONE
+
+WHAT WAS BUILT
+--------------
+Bin crate crates/passm-cli with 5 flat subcommands, manual --flag value parsing
+(no clap; deps stay minimal). Files:
+  crates/passm-cli/Cargo.toml        deps: passm-crypto, passm-vault, argon2
+                                     (direct to name argon2::Error), serde_json,
+                                     rand (fresh salt). passm-sync dep dropped
+                                     (unused).
+  crates/passm-cli/src/main.rs       arg parsing + dispatch + exit-code mapping
+                                     (ExitCode::FAILURE, never a panic).
+  crates/passm-cli/src/error.rs      typed CliError enum (Usage/Io/Json/Argon2/
+                                     Envelope) with From impls.
+  crates/passm-cli/src/commands.rs   the 5 subcommands + the `unlock` seam.
+  crates/passm-cli/tests/cli.rs      6 integration tests driving the real binary.
+  crates/passm-cli/tests/fixtures/   vault.plain.json + vault.golden.passm1.
+
+Subcommands:
+  derive     --password <pw> --salt <hex>          prints master_key + vault_key hex
+  encrypt    --in <f> --out <f> --password <pw>    plaintext -> PASSM1 blob (fresh salt)
+  decrypt    --in <f> --out <f> --password <pw>    PASSM1 blob -> plaintext
+  vault-add  --vault <f> --password <pw> --title <t> --username <u>
+             --password-value <p> --url <u> --notes <n>
+  vault-list --vault <f> --password <pw>           prints "id title username" lines,
+                                                   deleted entries marked [deleted]
+
+THE UNLOCK SEAM (what the app's unlock will do, proven by the CLI):
+  parse_header(blob) -> params + salt -> derive_master_key(password, salt, params)
+  -> derive_vault_key(master) -> envelope::decrypt(vault_key, blob)
+
+GOLDEN-VECTOR CROSS-CHECK vs T2 (crates/passm-crypto/src/lib.rs tests)
+----------------------------------------------------------------------
+Reused T2's exact frozen inputs: password = b"correct horse battery staple",
+salt = [0x42; 32] (hex 4242...42), KdfParams::default() (64 MiB / t=3 / p=4).
+
+  $ cargo run -p passm-cli -- derive --password "correct horse battery staple" \
+      --salt 4242424242424242424242424242424242424242424242424242424242424242
+  master_key=eae979a72a22bbe97f27910e712144453cdbf7d8d9abecad6a90cc72730f4cb1
+  vault_key=b7f0cc5b680771019ec1575c402653824a643fffe733125fc38bb3fa12831eeb
+
+  master_key hex == T2 GOLDEN_MASTER_KEY [234,233,121,...]  -> MATCH
+  vault_key  hex == T2 GOLDEN_VAULT_KEY  [183,240,204,...]  -> MATCH
+Pinned automatically by integration test derive_matches_t2_golden_vectors.
+
+FIXTURES (committed)
+--------------------
+  tests/fixtures/vault.plain.json       canonical JSON, 3 entries (GitHub,
+                                        Personal Email, Old VPN), one marked
+                                        deleted (tombstone), realistic fields.
+  tests/fixtures/vault.golden.passm1    PASSM1 blob: vault.plain.json encrypted
+                                        with the T2 password via the CLI itself
+                                        (fresh salt + nonce at generation time;
+                                        header stores salt+params so decrypt
+                                        needs only the password). Used by the
+                                        decrypt roundtrip + wrong-password tests.
+The vault encryption password appears ONLY in test code / CLI invocations, never
+in any committed fixture (entry password fields are fake data, not the key).
+
+DESIGN NOTE: salt is a per-vault constant, not per-encryption
+-------------------------------------------------------------
+vault-add re-encrypts with the ORIGINAL header salt + params (only the nonce is
+fresh). The vault key is derived from password + header salt, so a fresh salt on
+re-encrypt would change the key and the password could no longer unlock the
+vault. First implementation used a fresh salt -> vault-list/decrypt after
+vault-add failed with AuthenticationFailed; caught by the vault-add tests.
+
+TESTS (cargo test -p passm-cli) - 6/6 PASS, ~14s (8 Argon2id derives total)
+--------------------------------------------------------------------------
+  derive_matches_t2_golden_vectors        derive output == T2 frozen keys
+  encrypt_then_decrypt_roundtrips_fixture encrypt+decrypt a temp copy of the
+                                          fixture -> byte-identical
+  decrypt_golden_blob_matches_fixture     committed golden blob decrypts to the
+                                          committed plaintext fixture
+  decrypt_with_wrong_password_exits_nonzero  exit code != 0, stderr message,
+                                          no output file written
+  vault_add_then_list_shows_new_entry     added title/username appear in list
+  vault_add_preserves_existing_entries    all 3 original entries survive add
+
+CLIPPY: cargo clippy -p passm-cli -- -D warnings  -> clean
+WORKSPACE: cargo test --workspace -> all green (crypto 17, vault 14, cli 6+0,
+           sync 11, app 1)
+
+QA SCENARIOS (manual, against target/debug/passm-cli)
+-----------------------------------------------------
+  QA1 derive deterministic + T2 cross-check        -> keys match T2 exactly
+  QA2 encrypt -> decrypt roundtrip                 -> cmp: bytes identical
+  QA3 decrypt with wrong password                  -> exit code 1, error on
+                                                     stderr, no output file
+  QA4 vault-add then vault-list                    -> new entry listed; deleted
+                                                     entry marked [deleted]
+  QA5 vault-add preserves others                   -> 3 original + 1 new = 4
+                                                     entries after decrypt
+
+COMMIT: feat(cli): core harness with golden-vector fixtures

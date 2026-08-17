@@ -1,0 +1,43 @@
+{
+  "entries": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "title": "GitHub",
+      "username": "octocat",
+      "password": "ghp_3f9aK2mQ8xR5vT1wY7uJ4nB6cD0eS",
+      "url": "https://github.com",
+      "notes": "Primary GitHub account",
+      "version": 3,
+      "device_id": "dev-laptop",
+      "created_at": 1700000000,
+      "updated_at": 1700003600,
+      "deleted": false
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "title": "Personal Email",
+      "username": "alice@example.com",
+      "password": "Tr0ub4dor&3",
+      "url": "https://mail.example.com",
+      "notes": "IMAP + webmail",
+      "version": 1,
+      "device_id": "dev-phone",
+      "created_at": 1700000100,
+      "updated_at": 1700000100,
+      "deleted": false
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "title": "Old VPN",
+      "username": "alice",
+      "password": "vpn-pass-2019",
+      "url": "https://vpn.example.com",
+      "notes": "Retired VPN, keep for history",
+      "version": 5,
+      "device_id": "dev-laptop",
+      "created_at": 1690000000,
+      "updated_at": 1695000000,
+      "deleted": true
+    }
+  ]
+}
