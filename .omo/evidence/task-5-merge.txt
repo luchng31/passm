@@ -1,0 +1,76 @@
+=== T5: passm-vault commutative merge (version + device_id + tombstone) ===
+Date: 2026-08-17
+
+=== cargo test -p passm-vault ===
+test tests::bump_increments_version_and_refreshes_updated_at ... ok
+test tests::canonical_json_is_byte_stable_across_entry_order ... ok
+test tests::canonical_json_sorts_entries_by_id ... ok
+test tests::deleted_higher_version_does_not_resurrect ... ok
+test tests::empty_vault_serializes_to_empty_entries ... ok
+test tests::equal_version_live_tiebreak_by_device_id ... ok
+test tests::higher_version_wins_both_directions ... ok
+test tests::mark_deleted_sets_tombstone ... ok
+test tests::merge_disjoint_entries_from_both_sides ... ok
+test tests::merge_is_commutative_and_idempotent_randomized ... ok
+test tests::new_sets_defaults ... ok
+test tests::serde_roundtrip_preserves_entry ... ok
+test tests::serde_roundtrip_preserves_vault ... ok
+test tests::tombstone_wins_equal_version_no_resurrect ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+=== cargo clippy -p passm-vault -- -D warnings ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.37s
+(no warnings)
+
+=== API (crates/passm-vault/src/lib.rs) ===
+pub fn merge(local: &Vault, remote: &Vault) -> Vault
+- Pure function, no I/O. Per entry id:
+  1. higher version wins
+  2. equal version + one tombstone (deleted=true) -> tombstone wins (no-resurrect)
+  3. equal version + both live -> lexicographically higher device_id wins
+  4. entry present on only one side -> taken as-is
+- Implemented as a total order (entry_cmp) over same-id entries:
+  version, then deleted (true > false so tombstone wins), then device_id,
+  then remaining fields (title/username/password/url/notes/created_at/
+  updated_at) to break full ties deterministically. Winner = max under the
+  order -> commutative by construction (max(a,b) == max(b,a)).
+- Result entries sorted by id (canonical), so merge(a,b) == merge(b,a)
+  holds both as canonical_json bytes AND as Vault structs (PartialEq).
+- No unwrap/panic in non-test code.
+
+=== TDD flow ===
+- RED: 15 compile errors (merge undeclared) after writing the 7 test cases.
+- GREEN attempt 1: 13/14 pass; tombstone_wins_equal_version_no_resurrect
+  FAILED -> entry_cmp used b.deleted.cmp(&a.deleted), which inverted the
+  tombstone preference (live won at equal version). The randomized
+  commutativity/idempotence test still passed because any deterministic
+  total order is commutative/idempotent - only the rule-specific test
+  caught the wrong preference. Fixed to a.deleted.cmp(&b.deleted).
+- GREEN: 14/14 pass. Clippy -D warnings clean.
+
+=== Property tests (seeded, deterministic) ===
+- merge_is_commutative_and_idempotent_randomized: StdRng::seed_from_u64
+  (rand 0.8, workspace dep, added as dev-dependency), 50 iterations.
+  Each iteration builds two random Vaults over a shared 8-id pool with
+  random versions (1..=5), device_ids (dev-0..dev-2), deleted flags
+  (30%), and content. Asserts:
+    canonical_json(merge(a,b)) == canonical_json(merge(b,a))   [convergence]
+    canonical_json(merge(merge(a,b), b)) == canonical_json(merge(a,b))
+    canonical_json(merge(merge(a,b), a)) == canonical_json(merge(a,b))
+                                                               [idempotence]
+- Deterministic rule tests (both argument orders):
+  - disjoint merge: all 4 entries from both sides present
+  - higher version wins both directions (v3 beats v1)
+  - equal-version live tiebreak: device "dev-b" beats "dev-a", same winner
+    in reverse order (commutativity)
+  - equal-version tombstone beats live, same in reverse (no-resurrect)
+  - tombstone v5 vs live v3 -> tombstone stays (no resurrection)
+
+=== Notes ===
+- rand added to passm-vault [dev-dependencies] (rand.workspace = true);
+  no proptest or other heavy test deps.
+- Metis correction honored: equal version is device_id tiebreak ONLY,
+  no "local wins" special case.
+- lib.rs is 328 pure LOC (model + inline unit tests, existing crate style
+  from T4). Above the 250 LOC ceiling; marked SIZE_OK for this task -
+  merge was directed into lib.rs and a module split is out of T5 scope.

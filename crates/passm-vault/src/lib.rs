@@ -1,6 +1,8 @@
 //! passm-vault: vault data model (entries, metadata), serialization (serde), ids (uuid).
 
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// A single password entry; `deleted` acts as a tombstone for sync/merge.
@@ -87,9 +89,53 @@ fn now_unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Deterministic total order over two entries with the same id.
+/// Higher version wins; equal version + one tombstone -> tombstone wins
+/// (no-resurrect); equal version + both live -> lexicographically higher
+/// device_id wins. Remaining fields break full ties so the winner is
+/// independent of argument order (commutativity).
+fn entry_cmp(a: &Entry, b: &Entry) -> Ordering {
+    a.version
+        .cmp(&b.version)
+        .then_with(|| a.deleted.cmp(&b.deleted))
+        .then_with(|| a.device_id.cmp(&b.device_id))
+        .then_with(|| a.title.cmp(&b.title))
+        .then_with(|| a.username.cmp(&b.username))
+        .then_with(|| a.password.cmp(&b.password))
+        .then_with(|| a.url.cmp(&b.url))
+        .then_with(|| a.notes.cmp(&b.notes))
+        .then_with(|| a.created_at.cmp(&b.created_at))
+        .then_with(|| a.updated_at.cmp(&b.updated_at))
+}
+
+/// Commutative + idempotent merge of two vaults (pure, no I/O).
+/// Per entry id: higher version wins; equal version + one tombstone ->
+/// tombstone wins (no-resurrect); equal version + both live ->
+/// lexicographically higher device_id wins. Entries present on only one
+/// side are taken as-is. Result entries are sorted by id (canonical).
+pub fn merge(local: &Vault, remote: &Vault) -> Vault {
+    let mut by_id: HashMap<Uuid, Entry> = HashMap::new();
+    for entry in local.entries.iter().chain(remote.entries.iter()) {
+        by_id
+            .entry(entry.id)
+            .and_modify(|existing| {
+                if entry_cmp(entry, existing) == Ordering::Greater {
+                    *existing = entry.clone();
+                }
+            })
+            .or_insert_with(|| entry.clone());
+    }
+    let mut entries: Vec<Entry> = by_id.into_values().collect();
+    entries.sort_by_key(|e| e.id);
+    Vault { entries }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
 
     fn entry_with_id(id: Uuid) -> Entry {
         Entry {
@@ -203,5 +249,146 @@ mod tests {
     fn empty_vault_serializes_to_empty_entries() {
         let vault = Vault::empty();
         assert_eq!(vault.canonical_json(), br#"{"entries":[]}"#);
+    }
+
+    fn entry_with_fields(id: Uuid, version: u64, device_id: &str, deleted: bool) -> Entry {
+        Entry {
+            id,
+            title: "title".into(),
+            username: "user".into(),
+            password: "pass".into(),
+            url: "https://example.com".into(),
+            notes: "notes".into(),
+            version,
+            device_id: device_id.into(),
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_000,
+            deleted,
+        }
+    }
+
+    fn random_entry(rng: &mut StdRng, id: Uuid) -> Entry {
+        Entry {
+            id,
+            title: format!("title-{}", rng.gen_range(0..10)),
+            username: format!("user-{}", rng.gen_range(0..10)),
+            password: format!("pass-{}", rng.gen_range(0..10)),
+            url: format!("https://example.com/{}", rng.gen_range(0..10)),
+            notes: format!("notes-{}", rng.gen_range(0..10)),
+            version: rng.gen_range(1..=5),
+            device_id: format!("dev-{}", rng.gen_range(0..3)),
+            created_at: rng.gen_range(1_700_000_000..1_700_000_100),
+            updated_at: rng.gen_range(1_700_000_000..1_700_000_100),
+            deleted: rng.gen_bool(0.3),
+        }
+    }
+
+    fn random_vault(rng: &mut StdRng, id_pool: &[Uuid]) -> Vault {
+        let n = rng.gen_range(0..=id_pool.len());
+        let entries = id_pool[..n].iter().map(|id| random_entry(rng, *id)).collect();
+        Vault { entries }
+    }
+
+    #[test]
+    fn merge_disjoint_entries_from_both_sides() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let c = Uuid::new_v4();
+        let d = Uuid::new_v4();
+        let local = Vault {
+            entries: vec![
+                entry_with_fields(a, 1, "dev-a", false),
+                entry_with_fields(b, 1, "dev-a", false),
+            ],
+        };
+        let remote = Vault {
+            entries: vec![
+                entry_with_fields(c, 1, "dev-b", false),
+                entry_with_fields(d, 1, "dev-b", false),
+            ],
+        };
+        let merged = merge(&local, &remote);
+        let mut got = ids(&merged.entries);
+        got.sort();
+        let mut want = vec![a, b, c, d];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn higher_version_wins_both_directions() {
+        let id = Uuid::new_v4();
+        let local = Vault {
+            entries: vec![entry_with_fields(id, 1, "dev-a", false)],
+        };
+        let remote = Vault {
+            entries: vec![entry_with_fields(id, 3, "dev-b", false)],
+        };
+        for merged in [merge(&local, &remote), merge(&remote, &local)] {
+            assert_eq!(merged.entries.len(), 1);
+            assert_eq!(merged.entries[0].version, 3);
+            assert_eq!(merged.entries[0].device_id, "dev-b");
+        }
+    }
+
+    #[test]
+    fn equal_version_live_tiebreak_by_device_id() {
+        let id = Uuid::new_v4();
+        let local = Vault {
+            entries: vec![entry_with_fields(id, 2, "dev-a", false)],
+        };
+        let remote = Vault {
+            entries: vec![entry_with_fields(id, 2, "dev-b", false)],
+        };
+        for merged in [merge(&local, &remote), merge(&remote, &local)] {
+            assert_eq!(merged.entries.len(), 1);
+            assert_eq!(merged.entries[0].device_id, "dev-b");
+        }
+    }
+
+    #[test]
+    fn tombstone_wins_equal_version_no_resurrect() {
+        let id = Uuid::new_v4();
+        let local = Vault {
+            entries: vec![entry_with_fields(id, 2, "dev-a", false)],
+        };
+        let remote = Vault {
+            entries: vec![entry_with_fields(id, 2, "dev-b", true)],
+        };
+        for merged in [merge(&local, &remote), merge(&remote, &local)] {
+            assert_eq!(merged.entries.len(), 1);
+            assert!(merged.entries[0].deleted);
+        }
+    }
+
+    #[test]
+    fn deleted_higher_version_does_not_resurrect() {
+        let id = Uuid::new_v4();
+        let local = Vault {
+            entries: vec![entry_with_fields(id, 5, "dev-a", true)],
+        };
+        let remote = Vault {
+            entries: vec![entry_with_fields(id, 3, "dev-b", false)],
+        };
+        for merged in [merge(&local, &remote), merge(&remote, &local)] {
+            assert_eq!(merged.entries.len(), 1);
+            assert!(merged.entries[0].deleted);
+            assert_eq!(merged.entries[0].version, 5);
+        }
+    }
+
+    #[test]
+    fn merge_is_commutative_and_idempotent_randomized() {
+        let mut rng = StdRng::seed_from_u64(0x5EED_CAFE);
+        let id_pool: Vec<Uuid> = (0..8).map(|_| Uuid::new_v4()).collect();
+        for _ in 0..50 {
+            let local = random_vault(&mut rng, &id_pool);
+            let remote = random_vault(&mut rng, &id_pool);
+            let ab = merge(&local, &remote);
+            let ba = merge(&remote, &local);
+            assert_eq!(ab.canonical_json(), ba.canonical_json());
+            assert_eq!(merge(&ab, &remote).canonical_json(), ab.canonical_json());
+            assert_eq!(merge(&ab, &local).canonical_json(), ab.canonical_json());
+        }
     }
 }

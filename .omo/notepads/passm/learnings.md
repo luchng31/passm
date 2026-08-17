@@ -40,3 +40,12 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - Golden vector frozen in test: password=`b"correct horse battery staple"`, salt=`[0x42;32]`, default params → master `[234,233,121,...]`, vault `[183,240,204,...]`. QA: mutating a constant byte → test FAILED → reverted.
 - TDD flow: RED (23 compile errors, functions missing) → GREEN (5/6, golden placeholder red) → freeze real values (6/6). Clippy `-D warnings` clean.
 - Evidence: .omo/evidence/task-2-kdf.txt
+
+## [2026-08-17] T5 done: passm-vault commutative merge
+- `pub fn merge(local: &Vault, remote: &Vault) -> Vault` in crates/passm-vault/src/lib.rs, pure (no I/O). Rule per id: higher version wins; equal version + one tombstone → tombstone wins (no-resurrect); equal version + both live → lexicographically higher device_id wins; single-side entry taken as-is.
+- Implemented as a **total order** (`entry_cmp`: version → deleted → device_id → remaining fields) and winner = max. Commutativity is free by construction (`max(a,b)==max(b,a)`); idempotence follows because re-merging an input can never beat the already-chosen max. Result entries sorted by id.
+- **Bug caught by the rule-specific test that the property test could NOT catch**: first impl used `b.deleted.cmp(&a.deleted)` which inverted the tombstone preference (live won at equal version). The randomized commutativity/idempotence test passed anyway — any deterministic total order is commutative/idempotent. Lesson: property tests prove convergence, but rule-specific deterministic tests are what pin the actual preference direction.
+- Property test: `StdRng::seed_from_u64` (rand 0.8 workspace dep, added to passm-vault `[dev-dependencies]`), 50 iterations, asserts `canonical_json(merge(a,b)) == canonical_json(merge(b,a))` + idempotence `merge(merge(a,b), b) == merge(a,b)`. No proptest needed.
+- rand 0.8 API: `StdRng::seed_from_u64`, `rng.gen_range(0..=n)`, `rng.gen_bool(0.3)` — trait imports (`Rng`, `SeedableRng`) must be at the test-module level, not inside the test fn, if helper fns also use them.
+- TDD: RED (15 compile errors) → GREEN (14/14). Clippy `-D warnings` clean.
+- Evidence: .omo/evidence/task-5-merge.txt
