@@ -29,6 +29,11 @@ const FETCH_REFSPEC: &str = "+refs/heads/*:refs/remotes/origin/*";
 /// `OnceLock`) so a re-clone can point it at a fresh directory.
 static REPO_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// Serializes tests across modules that share the module-global `REPO_DIR`
+/// (git_repo and sync_engine test suites must never run concurrently).
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
+
 /// Returns a credential callback that authenticates with the PAT as the
 /// password and a dummy username (GitHub accepts PATs this way).
 fn pat_credentials(
@@ -42,6 +47,34 @@ fn open_repo() -> Result<Repository, SyncError> {
     let guard = REPO_DIR.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = guard.as_deref().ok_or(SyncError::RepoNotInitialized)?;
     Repository::open(dir).map_err(SyncError::Git)
+}
+
+/// Returns the local repository directory set by `ensure_clone`.
+pub fn repo_dir() -> Result<PathBuf, SyncError> {
+    let guard = REPO_DIR.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.clone().ok_or(SyncError::RepoNotInitialized)
+}
+
+/// Branch name of the current HEAD, handling the unborn (empty clone) case
+/// where HEAD points at a branch that does not exist yet.
+fn current_branch_name(repo: &Repository) -> Option<String> {
+    if let Ok(head) = repo.head() {
+        if let Ok(shorthand) = head.shorthand() {
+            return Some(shorthand.to_string());
+        }
+    }
+    let head_ref = repo.find_reference("HEAD").ok()?;
+    let target = head_ref.symbolic_target().ok()??;
+    target.strip_prefix("refs/heads/").map(str::to_string)
+}
+
+/// Shorthand name of the current branch, handling the unborn (empty clone)
+/// case. Errors only if HEAD is detached.
+pub fn current_branch() -> Result<String, SyncError> {
+    let repo = open_repo()?;
+    current_branch_name(&repo).ok_or_else(|| {
+        SyncError::Git(git2::Error::from_str("cannot determine current branch"))
+    })
 }
 
 /// Rejects absolute paths and paths escaping the working tree.
@@ -173,14 +206,10 @@ pub fn current_head() -> Result<Option<Oid>, SyncError> {
 }
 
 /// Oid of the remote-tracking ref for the current branch, or `None` if the
-/// remote ref does not exist yet.
+/// remote ref does not exist yet. Works for an unborn HEAD (empty clone).
 pub fn remote_head() -> Result<Option<Oid>, SyncError> {
     let repo = open_repo()?;
-    let head = match repo.head() {
-        Ok(h) => h,
-        Err(_) => return Ok(None),
-    };
-    let Some(branch) = head.shorthand().ok() else {
+    let Some(branch) = current_branch_name(&repo) else {
         return Ok(None);
     };
     let tracking = format!("refs/remotes/origin/{branch}");
@@ -190,6 +219,22 @@ pub fn remote_head() -> Result<Option<Oid>, SyncError> {
         Err(e) => Err(SyncError::Git(e)),
     };
     result
+}
+
+/// Reads the `vault.enc` blob from the tree of the commit a ref points at.
+pub fn read_vault_from_ref(refname: &str) -> Result<Vec<u8>, SyncError> {
+    let repo = open_repo()?;
+    let reference = repo.find_reference(refname).map_err(SyncError::Git)?;
+    let oid = reference.target().ok_or_else(|| {
+        SyncError::Git(git2::Error::from_str("ref has no commit target"))
+    })?;
+    let commit = repo.find_commit(oid).map_err(SyncError::Git)?;
+    let tree = commit.tree().map_err(SyncError::Git)?;
+    let entry = tree
+        .get_path(Path::new("vault.enc"))
+        .map_err(SyncError::Git)?;
+    let blob = repo.find_blob(entry.id()).map_err(SyncError::Git)?;
+    Ok(blob.content().to_vec())
 }
 
 /// Reads the vault blob from the working tree (post-merge content, for T10).
@@ -249,6 +294,44 @@ pub fn commit_vault_file(relative_path: &str, message: &str) -> Result<Oid, Sync
     Ok(oid)
 }
 
+/// Commits the staged vault file as a two-parent merge commit with the remote
+/// head as the second parent. A push only succeeds when the local branch is a
+/// descendant of the remote branch, so a conflict-resolution commit must adopt
+/// the remote head as a parent or a rejected push can never converge.
+pub fn commit_vault_merge(
+    relative_path: &str,
+    message: &str,
+    remote_oid: Oid,
+) -> Result<Oid, SyncError> {
+    let repo = open_repo()?;
+    let path = safe_rel_path(relative_path)?;
+    let mut index = repo.index().map_err(SyncError::Git)?;
+    index.add_path(path).map_err(SyncError::Git)?;
+    let tree_oid = index.write_tree().map_err(SyncError::Git)?;
+    let tree = repo.find_tree(tree_oid).map_err(SyncError::Git)?;
+    let signature = Signature::now(COMMIT_NAME, COMMIT_EMAIL).map_err(SyncError::Git)?;
+    let local_oid = current_head()?.ok_or_else(|| {
+        SyncError::Git(git2::Error::from_str("merge requires an existing local commit"))
+    })?;
+    let parents = [
+        repo.find_commit(local_oid).map_err(SyncError::Git)?,
+        repo.find_commit(remote_oid).map_err(SyncError::Git)?,
+    ];
+    let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+    let oid = repo
+        .commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parent_refs,
+        )
+        .map_err(SyncError::Git)?;
+    index.write().map_err(SyncError::Git)?;
+    Ok(oid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,8 +343,6 @@ mod tests {
 
     /// Serializes git_repo tests: they share the module-global `REPO_DIR`, so
     /// parallel execution would make one test operate on another's repository.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }

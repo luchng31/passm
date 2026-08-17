@@ -1,0 +1,107 @@
+T10: passm-sync conflict merge (backup-before-merge + retry loop)
+=================================================================
+Date: 2026-08-17
+Status: DONE
+
+WHAT WAS BUILT
+--------------
+crates/passm-sync/src/sync_engine.rs (new module, wired via lib.rs `pub mod sync_engine`)
+  pub const VAULT_FILE = "vault.enc"
+  pub struct SyncOutcome { pushed, pulled, merged, backup_created: Option<PathBuf> }
+  pub fn sync(pat, vault_key, device_id) -> Result<SyncOutcome, SyncError>
+      retry loop 0..MAX_ATTEMPTS(3): sync_once; on NonFastForward -> fetch + retry;
+      after 3 attempts -> SyncError::SyncRetryExhausted
+  sync_once(pat, vault_key, device_id)   fetch -> read local/remote heads -> decide:
+      (None, None)                    noop
+      (Some l, Some r) if l == r      noop
+      (None, Some)                    pull_first  (commit "pull: initial")
+      (Some, None)                    push        (first push)
+      (Some l, Some r) FF(l->r)       push        (fast-forward push)
+      (Some l, Some r) FF(r->l)       pull_fast_forward (commit "pull: fast-forward")
+      (Some, Some) divergent          conflict_merge
+  conflict_merge(pat, vault_key, device_id, remote_oid)
+      1. backup_vault(local_blob) BEFORE merge (backups/vault.<ts>.enc)
+      2. read remote blob from refs/remotes/origin/<branch>
+      3. decrypt both; remote decrypt failure -> typed Envelope error, local intact
+      4. passm_vault::merge(local, remote)  (commutative + idempotent)
+      5. re-encrypt reusing ORIGINAL header salt + params (T6 salt invariant)
+      6. write + commit as TWO-PARENT merge commit (local head + remote head)
+         message "merge: converge (device <id>)"
+      7. push; NonFastForward propagates to retry loop
+  backup_vault(blob) -> PathBuf          collision-safe ts bump; prune to MAX_BACKUPS(20)
+  prune_backups / parse_backup_ts        oldest-first deletion
+  read_local_vault / read_remote_vault   working-tree blob / tracking-ref blob
+  push_with_hook + #[cfg(test)] PRE_PUSH test hook (libgit2 has no receive-pack)
+
+crates/passm-sync/src/git_repo.rs (additions)
+  pub fn repo_dir() -> PathBuf
+  fn current_branch_name(repo) -> Option<String>   unborn-HEAD aware (reads HEAD
+                                                    symbolic target -> refs/heads/<b>)
+  pub fn current_branch() -> Result<String, SyncError>
+  pub fn read_vault_from_ref(refname) -> Result<Vec<u8>, SyncError>
+  pub fn commit_vault_merge(rel_path, msg, remote_oid) -> Oid   two-parent commit
+  remote_head() rewritten to use current_branch_name (handles empty clone)
+  #[cfg(test)] pub(crate) static TEST_LOCK shared with sync_engine tests
+
+crates/passm-sync/src/error.rs: added variants
+  Envelope(EnvelopeError)     decrypt/parse failure (typed, non-clobbering)
+  Json(serde_json::Error)     vault parse failure
+  VaultMissing                local vault absent on merge
+  SyncRetryExhausted          remote kept advancing past MAX_ATTEMPTS
+
+crates/passm-sync/src/lib.rs: pub mod sync_engine + re-exports
+  (current_branch, read_vault_from_ref, repo_dir, backup_vault, sync,
+   SyncOutcome, VAULT_FILE)
+crates/passm-sync/Cargo.toml: + passm-crypto, passm-vault, serde_json
+
+TESTS (29 passed, 1 ignored keyring; clippy -D warnings clean)
+-------------------------------------------------------------
+sync_engine (10, file:// bare remotes, multi-device via REPO_DIR re-pointing):
+  first_push_succeeds_on_empty_remote        (None, None) -> push, remote == vault
+  first_pull_succeeds_on_empty_local         (None, Some) -> pull, commit "pull: initial"
+  converged_sync_is_noop                     equal heads -> noop, no backup
+  fast_forward_push_advances_remote          FF push advances remote
+  fast_forward_pull_adopts_remote            FF pull adopts remote vault
+  conflict_merge_converges_and_creates_backup  divergent -> merge, backup exists,
+                                               merged vault {e1,e2,e3}, commutativity
+                                               (device A converges to same vault)
+  backup_retention_prunes_to_twenty          25 backups -> 20 newest remain
+  backup_file_is_valid_passm1_blob           backup decrypts with key, parses
+  sync_exhausts_retries_when_remote_keeps_advancing  hook advances every push ->
+                                               SyncRetryExhausted
+  sync_retries_and_converges_when_remote_advances_once  hook advances once ->
+                                               merge converges on retry
+git_repo (8) + pat_store (5) + device_id (6) from T8/T9 still green.
+
+DESIGN NOTES
+------------
+- Salt invariant (T6): conflict merge re-encrypts with envelope::parse_header
+  (local_blob) -> params + salt; only the nonce is fresh. A fresh salt would
+  change the derived key and the password could no longer unlock the vault.
+- TWO-PARENT MERGE COMMIT is required for retry convergence: a push only
+  succeeds when the local branch is a descendant of the remote branch. If the
+  conflict-resolution commit only had the local head as parent, a rejected push
+  (remote advanced concurrently) would re-merge forever on top of the stale
+  local branch and never become a descendant of the remote -> SyncRetryExhausted
+  even though the remote stopped advancing. Adopting the remote head as the
+  second parent makes the next push a fast-forward.
+- libgit2 (vendored) has NO receive-pack / server hooks, so the pre-receive-hook
+  retry simulation is impossible; used a #[cfg(test)] PRE_PUSH hook
+  (Mutex<Option<Arc<dyn Fn() + Send + Sync>>>) installed via run_pre_push_hook.
+  The hook is CLONED out of the mutex before invoking so a hook may clear
+  itself (set PRE_PUSH = None) without deadlocking.
+- Module-global REPO_DIR (T9) means multi-device tests must re-point it before
+  EACH device's operation block: ensure_clone(&url, &local_x) before every
+  write/commit/push/sync for device x. Forgetting this makes device A's writes
+  land in device B's repo (silent cross-device corruption in tests).
+- remote_head() on an empty clone: repo.head() errors with UnbornBranch; the
+  HEAD symbolic target ("refs/heads/master") is read instead, so the tracking
+  ref refs/remotes/origin/<branch> is found after the first fetch.
+- git2 0.21 Reference::symbolic_target() returns Result<Option<&str>, Error>
+  (not Option) - needs .ok()?? to extract.
+- canonical_json() sorts entries by id, so decrypted blobs compare equal to
+  expected Vaults only via canonical_json() (or titles()), not Vault PartialEq.
+- Device A's post-merge sync is a FAST-FORWARD PULL (its v3 is an ancestor of
+  the merge commit), not a second merge - commutativity holds on vault content.
+
+COMMIT: feat(sync): backup-before-merge conflict resolution

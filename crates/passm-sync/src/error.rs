@@ -1,5 +1,6 @@
 //! Typed error surface for passm-sync.
 
+use passm_crypto::envelope::EnvelopeError;
 use std::fmt;
 use std::io;
 
@@ -21,6 +22,16 @@ pub enum SyncError {
     NonFastForward,
     /// A repository operation was attempted before `git_repo::ensure_clone`.
     RepoNotInitialized,
+    /// A PASSM1 envelope could not be parsed or decrypted (wrong key or
+    /// tampered blob). A remote decrypt failure never clobbers the local vault.
+    Envelope(EnvelopeError),
+    /// The decrypted vault plaintext is not valid vault JSON.
+    Json(serde_json::Error),
+    /// The local working tree has no `vault.enc` to merge.
+    VaultMissing,
+    /// The sync loop retried [`crate::sync_engine::MAX_ATTEMPTS`] times and
+    /// the remote kept advancing (someone else keeps pushing concurrently).
+    SyncRetryExhausted,
 }
 
 impl fmt::Display for SyncError {
@@ -37,6 +48,12 @@ impl fmt::Display for SyncError {
             SyncError::RepoNotInitialized => {
                 write!(f, "repository not initialized; call git_repo::ensure_clone first")
             }
+            SyncError::Envelope(e) => write!(f, "envelope error: {e}"),
+            SyncError::Json(e) => write!(f, "vault JSON error: {e}"),
+            SyncError::VaultMissing => write!(f, "vault.enc is missing from the local working tree"),
+            SyncError::SyncRetryExhausted => {
+                write!(f, "sync retried 3 times and the remote kept advancing")
+            }
         }
     }
 }
@@ -46,6 +63,8 @@ impl std::error::Error for SyncError {
         match self {
             SyncError::Io(e) => Some(e),
             SyncError::Git(e) => Some(e),
+            SyncError::Envelope(e) => Some(e),
+            SyncError::Json(e) => Some(e),
             _ => None,
         }
     }

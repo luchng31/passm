@@ -1120,7 +1120,10 @@ version = "0.1.0"
 dependencies = [
  "git2",
  "keyring",
+ "passm-crypto",
+ "passm-vault",
  "serde",
+ "serde_json",
  "tempfile",
  "uuid",
 ]
