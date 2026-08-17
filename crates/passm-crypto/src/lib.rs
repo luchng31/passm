@@ -5,6 +5,8 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::Zeroize;
 
+pub mod envelope;
+
 /// Argon2id KDF parameters. Defaults match the PASSM1 spec: 64 MiB / t=3 / p=4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KdfParams {

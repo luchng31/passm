@@ -41,6 +41,16 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - TDD flow: RED (23 compile errors, functions missing) → GREEN (5/6, golden placeholder red) → freeze real values (6/6). Clippy `-D warnings` clean.
 - Evidence: .omo/evidence/task-2-kdf.txt
 
+## [2026-08-17] T3 done: PASSM1 envelope (XChaCha20-Poly1305, AAD-bound 75B header)
+- `envelope` module in passm-crypto: `encrypt(vault_key, &KdfParams, salt, plaintext) -> Vec<u8>`, `decrypt(vault_key, blob) -> Result<Vec<u8>>`, `parse_header(blob) -> Result<EnvelopeHeader{params, salt}>`. Header = magic `PASSM1`(6) + version 0x01(1) + mem_kib/iterations/parallelism u32 BE(12) + salt(32) + nonce(24) = 75B, ALL as AAD to XChaCha20-Poly1305; ciphertext+16B tag at offset 75.
+- **chacha20poly1305 0.11 API**: `XNonce`/`Key` are `hybrid_array::Array` aliases. `encrypt`/`decrypt` take `&XNonce`/`&Key` BY REFERENCE. `Array::from_slice()` is **deprecated** in hybrid-array 0.4.14 → use `XNonce::from([u8;24])` / `Key::from([u8;32])` (From<[T;N]> impl) — same semantics, clippy-clean.
+- `encrypt` returns `Vec<u8>` (spec signature, not Result): aead::Error is provably unreachable for in-memory payloads (only ≥256 GiB or AAD > u64::MAX) → `match` + `unreachable!` + `# Panics` doc, same pattern as T2's `derive_vault_key`.
+- **Clippy gotcha**: a doc line starting with `>=` (e.g. ">= 256 GiB") trips `clippy::doc_lazy_continuation` (interpreted as a quote) → reword to "of 256 GiB or more".
+- Fresh nonce via `rand::rngs::OsRng` + `RngCore::fill_bytes` (rand 0.8). Enabled `chacha20poly1305` `zeroize` feature at member level (`{ workspace = true, features = ["zeroize"] }`) so the cipher's internal key copy is wiped on drop — same member-level feature pattern as T4's uuid serde.
+- Tamper-every-header-byte test: bytes 0..5 (magic) → `BadMagic`, byte 6 (version) → `UnsupportedVersion`, bytes 7..74 (KDF params/salt/nonce) → `AuthenticationFailed`. QA mutation (remove AAD from both encrypt+decrypt) made the test FAIL → AAD binding proven non-vacuous.
+- TDD flow: RED (37 compile errors) → GREEN (17/17: 11 envelope + 6 T2 KDF). Clippy `-D warnings` clean.
+- Evidence: .omo/evidence/task-3-envelope.txt
+
 ## [2026-08-17] T5 done: passm-vault commutative merge
 - `pub fn merge(local: &Vault, remote: &Vault) -> Vault` in crates/passm-vault/src/lib.rs, pure (no I/O). Rule per id: higher version wins; equal version + one tombstone → tombstone wins (no-resurrect); equal version + both live → lexicographically higher device_id wins; single-side entry taken as-is.
 - Implemented as a **total order** (`entry_cmp`: version → deleted → device_id → remaining fields) and winner = max. Commutativity is free by construction (`max(a,b)==max(b,a)`); idempotence follows because re-merging an input can never beat the already-chosen max. Result entries sorted by id.

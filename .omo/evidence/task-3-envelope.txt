@@ -1,0 +1,79 @@
+=== T3 evidence: passm-crypto PASSM1 envelope (XChaCha20-Poly1305, AAD-bound header) ===
+date: 2026-08-17T00:35:21Z
+commit-before: fb08089
+
+=== cargo test -p passm-crypto ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.13s
+     Running unittests src/lib.rs (target/debug/deps/passm_crypto-a26ae5f7cf9a1636)
+
+running 17 tests
+test envelope::tests::bad_magic_is_rejected ... ok
+test envelope::tests::blob_shorter_than_header_is_rejected ... ok
+test envelope::tests::header_layout_is_byte_exact ... ok
+test envelope::tests::empty_plaintext_roundtrips ... ok
+test envelope::tests::header_roundtrips_params_and_salt ... ok
+test envelope::tests::roundtrip_returns_original_plaintext ... ok
+test envelope::tests::tampering_ciphertext_fails_tag_verification ... ok
+test envelope::tests::two_encrypts_with_same_inputs_produce_different_ciphertext ... ok
+test envelope::tests::unsupported_version_is_rejected ... ok
+test envelope::tests::wrong_key_fails_tag_verification ... ok
+test envelope::tests::tampering_any_header_byte_is_rejected ... ok
+test tests::kdf_params_default_is_64mib_3_4 ... ok
+test tests::vault_key_matches_independent_hkdf ... ok
+test tests::golden_vector_master_and_vault_key ... ok
+test tests::wrong_password_yields_different_master_key ... ok
+test tests::wrong_params_yield_different_master_key ... ok
+test tests::wrong_salt_yields_different_master_key ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.93s
+
+   Doc-tests passm_crypto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+=== cargo clippy -p passm-crypto -- -D warnings ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.81s
+
+=== TDD flow ===
+RED: 37 compile errors (encrypt/decrypt/parse_header/EnvelopeError/HEADER_LEN not found)
+GREEN: 17/17 tests pass (11 new envelope + 6 existing T2 KDF tests)
+Clippy: clean after fixing doc_lazy_continuation (line starting with ">=" in # Panics doc)
+
+=== QA: AAD binding proven non-vacuous ===
+Mutation: removed AAD from BOTH encrypt and decrypt (aad: b"") ->
+  tampering_any_header_byte_is_rejected FAILED (tampering KDF-param/salt bytes 7..50
+  no longer rejected, proving those bytes are AAD-bound)
+Reverted: all 17 tests green again
+
+=== API ===
+envelope::encrypt(vault_key: &[u8;32], params: &KdfParams, salt: [u8;32], plaintext: &[u8]) -> Vec<u8>
+envelope::decrypt(vault_key: &[u8;32], blob: &[u8]) -> Result<Vec<u8>>
+envelope::parse_header(blob: &[u8]) -> Result<EnvelopeHeader>  // params + salt getter
+EnvelopeError: TooShort | BadMagic | UnsupportedVersion(u8) | AuthenticationFailed
+
+=== Byte layout (verified by header_layout_is_byte_exact) ===
+bytes 0..5   magic b"PASSM1"
+byte  6      version 0x01
+bytes 7..10  mem_kib u32 BE
+bytes 11..14 iterations u32 BE
+bytes 15..18 parallelism u32 BE
+bytes 19..50 salt (32B)
+bytes 51..74 nonce (24B, fresh OsRng per encrypt)
+bytes 75..   ciphertext || 16B Poly1305 tag
+AAD = bytes 0..74 inclusive (entire 75-byte header)
+
+=== Notes ===
+- chacha20poly1305 0.11: XNonce = Array<u8, U24>; Key = Array<u8, U32>.
+  from_slice() is DEPRECATED in hybrid-array 0.4.14 -> used From<[u8; N]> instead
+  (XNonce::from([u8;24]), Key::from([u8;32])), same 24B/32B semantics.
+- encrypt() -> Vec<u8> (spec signature, not Result): aead::Error is provably
+  unreachable for in-memory payloads (only fails >= 256 GiB or AAD > u64::MAX);
+  handled with match + unreachable! + # Panics doc, matching T2 derive_vault_key precedent.
+- Enabled chacha20poly1305 "zeroize" feature at member level (key hygiene: wipes
+  cipher's internal key copy on drop). Workspace dep unchanged.
+- decrypt() parses header via parse_header() (magic/version/length validated) then
+  AEAD-decrypts with AAD = blob[..75]; nonce read from bytes 51..75.
+- No unwrap/panic in non-test code. No logging of keys/ciphertext/plaintext.
