@@ -9,3 +9,11 @@ rust-version.workspace = true
 git2.workspace = true
 serde.workspace = true
 uuid.workspace = true
+# keyring 4.1.x: windows-native-keyring-store for the Windows desktop build.
+# Android uses the android-native-keyring-store feature + Kotlin
+# initializeNdkContext init (wired in T16, NOT enabled here - it would
+# break linux/macos builds).
+keyring = { workspace = true, features = ["windows-native-keyring-store"] }
+
+[dev-dependencies]
+tempfile = "3"

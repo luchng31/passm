@@ -1,0 +1,69 @@
+T8: passm-sync keyring PAT store + persistent device_id
+========================================================
+Date: 2026-08-17
+Status: DONE (Android Kotlin init deferred to T16 - gen/android does not exist yet)
+
+WHAT WAS BUILT
+--------------
+crates/passm-sync with 3 modules:
+  crates/passm-sync/src/pat_store.rs   PatStore trait + KeyringPatStore +
+                                       MockPatStore (in-memory, for tests)
+  crates/passm-sync/src/device_id.rs   load(dir) / load_or_create(dir) UUIDv4
+                                       persistence to <dir>/device_id
+  crates/passm-sync/src/error.rs       SyncError enum: PatMissing, Io,
+                                       KeyringError(String), InvalidDeviceId
+  crates/passm-sync/Cargo.toml         deps: git2, serde, uuid, keyring
+                                       (windows-native-keyring-store);
+                                       dev-deps: tempfile
+
+PAT STORE (spec: service "passm", user "github-pat", keyring 4.1.x)
+-------------------------------------------------------------------
+trait PatStore: Send + Sync {
+    fn get(&self)    -> Result<Option<String>, SyncError>;
+    fn set(&self, pat: &str) -> Result<(), SyncError>;
+    fn delete(&self) -> Result<(), SyncError>;
+}
+- KeyringPatStore::new() -> keyring::Entry::new("passm", "github-pat")
+- get(): NoEntry -> Ok(None); other errors -> SyncError::KeyringError
+- set()/delete(): errors mapped to SyncError::KeyringError
+- Android: NOT enabled in Cargo.toml (would break linux/macos). T16 wires
+  features = ["android-native-keyring-store"] + Kotlin
+  io.crates.keyring.Keyring.initializeNdkContext(context) in
+  MainActivity.onCreate (Tauri 2.11+ removed automatic ndk-context init).
+  Documented in pat_store.rs doc comment.
+
+DEVICE ID (spec: UUIDv4 persisted to <app_data>/device_id)
+----------------------------------------------------------
+- load(dir): read + trim + UUID-parse validate; NotFound -> Ok(None);
+  invalid content -> SyncError::InvalidDeviceId (rejected, not regenerated -
+  a corrupt file is a red flag, silently replacing it would lose identity)
+- load_or_create(dir): existing -> return; else create_dir_all + fresh
+  UUIDv4 + write
+- Path is injected (no hardcoded data_dir; Tauri layer resolves app_data_dir
+  in T11)
+
+TESTS (cargo test -p passm-sync) - 11/11 PASS + 1 ignored
+----------------------------------------------------------
+pat_store (5, all against MockPatStore - headless-CI-safe):
+  get_empty_returns_none, set_then_get_returns_pat, delete_clears_pat,
+  set_overwrites_previous_pat, delete_when_empty_is_ok
+  + keyring_roundtrip_on_real_backend #[ignore] (needs desktop keyring)
+device_id (6, tempfile tempdirs):
+  write_then_reload_same_value, missing_file_generates_new_uuid,
+  directory_missing_creates_it, invalid_existing_id_is_rejected,
+  load_missing_dir_returns_none, generated_id_is_uuidv4
+
+CLIPPY: cargo clippy -p passm-sync -- -D warnings -> clean (re-verify
+        after first-run openssl-sys/vendored compile completes)
+WORKSPACE: cargo test --workspace -> all green (crypto 17, vault 14,
+           cli 6, sync 11+1ignored, app 1)
+
+DESIGN NOTES
+------------
+- PAT never touches disk in any code path (keyring or MockPatStore only).
+- device_id invalid-content policy: ERR (InvalidDeviceId), do not
+  auto-regenerate - preserves device identity integrity for merge tiebreak.
+- Windows feature set to windows-native-keyring-store per spec (Credential
+  Manager); the crate keeps the workspace-level git2 dep ready for T9.
+
+COMMIT: feat(sync): keyring PAT store and persistent device_id
