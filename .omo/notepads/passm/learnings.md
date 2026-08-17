@@ -70,3 +70,24 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - Argon2id 64 MiB ≈ 1-2 s/derive; the 6-test suite does 8 derives total (~14 s). Never loop derives in tests.
 - Error mapping: typed `CliError` enum (Usage/Io/Json/Argon2/Envelope) + `From` impls; `main` returns `ExitCode::FAILURE` (exit 1) after printing to stderr — no panics in non-test code.
 - Evidence: .omo/evidence/task-6-cli.txt
+
+## [2026-08-17] T7 done: Android cross-compile spike — GO for git2-on-Android
+- **git2 0.21 (vendored-libgit2+vendored-openssl+https) cross-compiles for aarch64-linux-android**: clean rebuild 2m 23s (vs 13m56s on Linux — Android NDK clang is faster than the box's gcc). keyring 4.1.6 android-native-keyring-store + chacha20poly1305/argon2/hkdf all compile. Binary is a valid aarch64 ELF (interpreter /system/bin/linker64).
+- **cargo-ndk 4.1.2 gotchas**: (1) `ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/r26d` MUST be set — it does NOT auto-detect the NDK under ANDROID_HOME; (2) `-p` goes AFTER `build`: `cargo ndk -t arm64-v8a build -p passm-crypto`, not before.
+- **git2-rs #920 (Android SSL certs, OPEN)**: Android has no /etc/ssl/certs; libgit2's OpenSSL backend can't find the trust store → "the SSL certificate is invalid" on HTTPS fetch. `SSL_CERT_DIR`/`set_ssl_cert_dir` don't help. Plan for T16: bundle Mozilla cacert.pem asset + set `SSL_CERT_FILE` or validate in `certificate_check` callback. NEVER accept-all (passm syncs encrypted vaults).
+- **git2-rs #1174 (Tauri+SELinux, OPEN)**: `avc: denied { link }` on HEAD.lock in app_data_file on some devices. VERIFIED libgit2 1.9.6 uses `open(O_CREAT|O_EXCL)`+`rename()` for lockfiles, NOT `link()` (link only in local-clone copy opt) → #1174 is device/ROM-specific runtime noise, watch item for T16 real-device testing, not a compile blocker.
+- **keyring android runtime**: `android-native-keyring-store` compiles but needs `io.crates.keyring.Keyring.initializeNdkContext(context)` in MainActivity.onCreate (Tauri 2.11+ removed auto init) — already planned in T8/T16.
+- **Spike main.rs gotchas** (compile-proof only): `XChaCha20Poly1305::new` needs `use chacha20poly1305::KeyInit`; `git2::Repository::open` is generic → bare fn-pointer ref needs `::<&str>` turbofish.
+- **DECISION: GO** — git2 on Android. Fallback (reqwest+rustls Contents API) NOT adopted. T9/T10/T16 proceed with git2 as designed.
+- Evidence: .omo/evidence/task-7-android-spike.md; logs /tmp/opencode/t7-crypto.log + t7-spike.log; spike crate /tmp/opencode/t7-spike/ (uncommitted).
+
+## [2026-08-17] T9 done: passm-sync git plumbing (git2 0.21)
+- `git_repo.rs`: ensure_clone/fetch/push/is_fast_forward/current_head/remote_head/checkout_vault_file/write_vault_file/commit_vault_file. PAT via `Cred::userpass_plaintext("x-access-token", pat)` in a `RemoteCallbacks::credentials` closure on BOTH fetch and push opts — NEVER in the remote URL (would leak into .git/config). ensure_clone also repairs a drifted origin URL.
+- **git2 0.21 API gotchas**: `Reference::shorthand()` returns `Result<&str, Error>` (NOT Option) → `.ok()` first. `Time::now()` does NOT exist → use `Signature::now(name, email)`. `Cred` has no username/password getters → test asserts `has_username()` + `credtype() == CredentialType::USER_PASS_PLAINTEXT.bits()`.
+- **Tail-expression temporary E0597**: `match repo.head() { ... }` as a function tail keeps the temporary `Reference` alive past `repo`'s drop → "repo does not live long enough". Fix: bind the match result to a local (`let result = match ...; result`).
+- **Non-FF detection**: libgit2 push.c returns GIT_ENONFASTFORWARD client-side when remote ref isn't an ancestor (verified in vendored libgit2-sys push.c:346/357). Detect via `e.code() == ErrorCode::NotFastForward` + message scan + `push_update_reference` rejection reason (3 layers).
+- **Global-state test isolation**: module-global `REPO_DIR` must be `Mutex<Option<PathBuf>>` (NOT OnceLock — re-clone must repoint it), and tests sharing it MUST be serialized via a `static TEST_LOCK: Mutex<()>` guard, else parallel tests operate on another test's already-deleted tempdir ("No such file or directory").
+- `push_update_reference` closure signature: `FnMut(&str, Option<&str>) -> Result<(), Error>` (Some = rejection reason). `RemoteCallbacks::credentials` bound is `+ 'a` (not 'static) — but capture-by-ref still needs the captured var defined BEFORE the callbacks var (drop order).
+- checkout_vault_file reads the WORKING TREE (not HEAD tree) so T10 sees post-merge content before committing.
+- TDD: RED (8 tests, missing functions) → GREEN (19/19 + 1 ignored keyring). Clippy `-D warnings` clean. Workspace green.
+- Evidence: .omo/evidence/task-9-git.txt

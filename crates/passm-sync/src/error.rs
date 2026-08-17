@@ -14,6 +14,13 @@ pub enum SyncError {
     KeyringError(String),
     /// The existing device_id file does not contain a valid UUIDv4.
     InvalidDeviceId,
+    /// git2/libgit2 failure (clone/fetch/push/commit/read errors).
+    Git(git2::Error),
+    /// The remote rejected a push because it was not a fast-forward.
+    /// T10 trigger: re-fetch + merge + retry.
+    NonFastForward,
+    /// A repository operation was attempted before `git_repo::ensure_clone`.
+    RepoNotInitialized,
 }
 
 impl fmt::Display for SyncError {
@@ -25,6 +32,11 @@ impl fmt::Display for SyncError {
             SyncError::InvalidDeviceId => {
                 write!(f, "device_id file does not contain a valid UUIDv4")
             }
+            SyncError::Git(e) => write!(f, "git error: {e}"),
+            SyncError::NonFastForward => write!(f, "push rejected: not a fast-forward"),
+            SyncError::RepoNotInitialized => {
+                write!(f, "repository not initialized; call git_repo::ensure_clone first")
+            }
         }
     }
 }
@@ -33,6 +45,7 @@ impl std::error::Error for SyncError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             SyncError::Io(e) => Some(e),
+            SyncError::Git(e) => Some(e),
             _ => None,
         }
     }

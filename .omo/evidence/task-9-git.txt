@@ -1,0 +1,91 @@
+T9: passm-sync git plumbing (ensure_clone / fetch / push / FF detection)
+========================================================================
+Date: 2026-08-17
+Status: DONE
+
+WHAT WAS BUILT
+--------------
+crates/passm-sync/src/git_repo.rs (new module, wired via lib.rs `pub mod git_repo`)
+  ensure_clone(remote_url, local_dir, pat)  clone if local_dir/.git missing, else
+                                            open existing; origin URL (re)set to
+                                            remote_url (PAT never in URL); records
+                                            local_dir in module-global REPO_DIR
+  fetch(pat)                                fetch origin with refspec
+                                            +refs/heads/*:refs/remotes/origin/*
+  push(pat)                                 push refs/heads/<branch>:refs/heads/<branch>;
+                                            non-FF -> SyncError::NonFastForward
+  is_fast_forward(local_head, remote_head)  graph_descendant_of(local, remote) or
+                                            equal oids -> true (pure check)
+  current_head() -> Option<Oid>             None for empty/unborn repo
+  remote_head() -> Option<Oid>              None if no refs/remotes/origin/<branch>
+  checkout_vault_file(rel_path) -> Vec<u8>  reads blob from working tree (post-merge
+                                            content for T10)
+  write_vault_file(rel_path, bytes)         write to working tree + stage (index)
+  commit_vault_file(rel_path, msg) -> Oid   stage + commit with deterministic
+                                            identity passm <passm@local>
+crates/passm-sync/src/error.rs: added variants
+  Git(git2::Error)          git2/libgit2 failure
+  NonFastForward            push rejected (T10 trigger: re-fetch+merge+retry)
+  RepoNotInitialized        repo op before ensure_clone
+crates/passm-sync/src/lib.rs: pub mod git_repo + re-exports
+
+PAT CREDENTIAL HANDLING (security)
+----------------------------------
+- Cred::userpass_plaintext("x-access-token", pat) inside a RemoteCallbacks
+  credentials closure, set on BOTH fetch and push options (and RepoBuilder
+  fetch_options for clone).
+- PAT is NEVER embedded in the remote URL -> cannot leak into .git/config.
+- ensure_clone also repairs a pre-existing origin whose URL drifted from the
+  expected remote_url (defense against a PAT-embedded URL from older code).
+- Callback path exercised by unit test calling the closure directly with a
+  fake https URL and asserting the produced Cred has a username and
+  USER_PASS_PLAINTEXT credtype.
+
+NON-FAST-FORWARD DETECTION (3 layers, all verified against vendored libgit2)
+---------------------------------------------------------------------------
+1. push() error code == ErrorCode::NotFastForward (libgit2 push.c returns
+   GIT_ENONFASTFORWARD when the remote ref is not an ancestor of the local
+   ref - confirmed in vendored libgit2-sys 0.18.7+1.9.6 push.c:346/357)
+2. error message contains "non-fast-forward"
+3. push_update_reference callback rejection reason contains "non-fast-forward"
+   (server-side rejection surfaces here when the protocol completes)
+
+TESTS (TDD: RED = 8 tests failed to compile - functions missing; then GREEN)
+---------------------------------------------------------------------------
+cargo test -p passm-sync: 19 passed, 1 ignored (keyring, headless CI)
+git_repo (8, file:// bare remotes via Repository::init_bare in tempdirs):
+  ensure_clone_creates_repo_with_remote      .git exists, origin name+url correct
+  ensure_clone_is_idempotent                 3x ensure_clone, still one repo
+  write_commit_push_reaches_remote           remote bare refs/heads/<b> == oid
+  fetch_updates_remote_tracking_ref          tracking ref moves v1 -> v2 after fetch
+  is_fast_forward_checks_ancestry            ancestor->true, equal->true, divergent->false
+  non_fast_forward_push_is_distinguishable   Err(SyncError::NonFastForward)
+  checkout_vault_file_roundtrip             write->commit->checkout byte-identical
+                                              (0..=255 payload)
+  credential_callback_uses_pat_as_password   closure called with fake https URL
+pat_store (5) + device_id (6) from T8 still green.
+
+CLIPPY: cargo clippy -p passm-sync -- -D warnings -> clean
+WORKSPACE: cargo test --workspace -> all green (crypto 17, vault 14, cli 6,
+           sync 19+1ignored, app 1)
+
+DESIGN NOTES
+------------
+- Module-global REPO_DIR: Mutex<Option<PathBuf>> (NOT OnceLock) so a re-clone
+  can repoint it; set by ensure_clone, read by open_repo(). T10 drives these
+  free functions from a single-threaded sync engine.
+- git_repo tests are serialized via a shared TEST_LOCK Mutex because they
+  share the global REPO_DIR; parallel execution made one test operate on
+  another test's (already-deleted) tempdir -> "No such file or directory".
+- Deterministic commit identity: Signature::now("passm", "passm@local")
+  (git2 0.21 has no Time::now(); Signature::now is the equivalent).
+- Reference::shorthand() returns Result<&str, Error> in git2 0.21 (not
+  Option) - call .ok() first.
+- Tail-expression temporary gotcha: `match repo.head() { ... }` as a function
+  tail keeps the temporary Reference alive past `repo`'s drop -> E0597; bind
+  the match result to a local first.
+- checkout_vault_file reads the WORKING TREE (not HEAD tree) so T10 sees
+  post-merge content before committing.
+- safe_rel_path rejects absolute paths and ".." traversal.
+
+COMMIT: feat(sync): git plumbing with PAT credentials
