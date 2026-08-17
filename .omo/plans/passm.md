@@ -86,7 +86,7 @@ Your next move: approve this plan. Full execution detail follows below.
 ## Todos
 > Implementation + Test = ONE todo. Never separate.
 <!-- APPEND TASK BATCHES BELOW THIS LINE WITH edit/apply_patch - never rewrite the headers above. -->
-- [ ] 1. Workspace scaffold + git2-on-Linux proof
+- [x] 1. Workspace scaffold + git2-on-Linux proof
   What to do / Must NOT do: Create cargo workspace at /home/ubuntu/passm with members `crates/passm-crypto`, `crates/passm-vault`, `crates/passm-sync`, `crates/passm-cli` (bin), `src-tauri` (Tauri 2 app placeholder crate). Add pinned deps to workspace Cargo.toml: git2 0.21, chacha20poly1305 0.11, argon2 0.5, hkdf 0.13, keyring 4.1, serde 1, uuid 1 (v4), zeroize 1, rand 0.8. Each crate gets lib.rs with a placeholder function + 1 smoke test. Verify git2 0.21 with `["vendored-libgit2","vendored-openssl","https"]` compiles on THIS Linux dev box (this de-risks the toolchain early). Must NOT: no .gitignore missing (add /target, /node_modules, /dist, *.local), no README unless asked, no bundler config yet. Must NOT: do not init git2 without vendored features (0.21 has `default = []` — https must be explicit).
   Parallelization: Wave 1 | Blocked by: — | Blocks: T2,T3,T4,T5,T6,T7
   References (executor has NO interview context - be exhaustive): draft /home/ubuntu/passm/.omo/drafts/passm.md (decisions + scope); Android verification report /home/ubuntu/.local/share/opencode/tool-output/tool_fff2adeec001rpPEnbIck8LVzf (git2 recipe L640-652: `git2 = { version = "0.21", features = ["vendored-libgit2", "vendored-openssl", "https"] }`, `default = []`); Tauri 2 docs https://v2.tauri.app/start/create-project/ and https://v2.tauri.app/start/prerequisites/.
@@ -94,7 +94,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios (name the exact tool + invocation): happy: `cargo test --workspace` (all pass); failure: remove vendored features → expect build error → restore. Evidence `.omo/evidence/task-1-scaffold.txt` (build + tree output).
   Commit: Y | chore: scaffold cargo workspace with pinned deps
 
-- [ ] 2. passm-crypto: key derivation (Argon2id + HKDF) with golden vectors
+- [x] 2. passm-crypto: key derivation (Argon2id + HKDF) with golden vectors
   What to do / Must NOT do: In `crates/passm-crypto`, implement `KdfParams { mem_kib: u32 = 65536, iterations: u32 = 3, parallelism: u32 = 4 }` (serde), `derive_master_key(password: &[u8], salt: &[u8;32], params: &KdfParams) -> Result<[u8;32]>` using argon2 0.5 `Algorithm::Argon2id` + `Version::V0x13`, and `derive_vault_key(master: &[u8;32]) -> [u8;32]` using hkdf 0.13 HKDF-SHA256 with salt=none, info=`b"passm-v1-vault-key"`, L=32. TDD: (a) golden vector — freeze one derived master key + vault key for fixed password+salt+params as asserted constants in the test (generate once, then assert); (b) HKDF cross-check vector; (c) wrong password/salt → different key; (d) wrong params → different key. Must NOT: no logging of keys/passwords; zeroize password buffer after derive; no unwrap/panic.
   Parallelization: Wave 1 | Blocked by: T1 | Blocks: T3
   References: draft passm.md key-hierarchy line (HKDF IKM=master, salt=none, info="passm-v1-vault-key", 32B); argon2 0.5.3 docs https://docs.rs/argon2/0.5.3/argon2/ (Algorithm::Argon2id default); hkdf 0.13 docs https://docs.rs/hkdf/0.13.0/hkdf/; crypto research tool_fff0cdee2001tVjdpZJiVgw0zI (KDF rationale, RFC 9106 option 2).
@@ -102,7 +102,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: run `cargo test -p passm-crypto` → all pass; failure: mutate a golden-vector constant → test fails → revert. Evidence `.omo/evidence/task-2-kdf.txt`.
   Commit: Y | feat(crypto): Argon2id+HKDF key derivation with golden vectors
 
-- [ ] 3. passm-crypto: PASSM1 envelope (encrypt/decrypt, AAD-bound header)
+- [x] 3. passm-crypto: PASSM1 envelope (encrypt/decrypt, AAD-bound header)
   What to do / Must NOT do: Implement `envelope::encrypt(vault_key: &[u8;32], params: &KdfParams, salt: [u8;32], plaintext: &[u8]) -> Vec<u8>` and `envelope::decrypt(vault_key: &[u8;32], blob: &[u8]) -> Result<Vec<u8>>`. Layout: bytes 0..5 magic b"PASSM1", byte 6 version 0x01, bytes 7..10 mem_kib u32 BE, 11..14 iterations u32 BE, 15..18 parallelism u32 BE, 19..50 salt, 51..74 nonce (24B from rand), ciphertext+16B tag from offset 75. AAD = bytes 0..74 inclusive (the whole 75-byte header). XChaCha20-Poly1305 via chacha20poly1305 0.11 `XChaCha20Poly1305`. Fresh random salt AND nonce per encrypt. TDD: roundtrip; wrong key → error; tamper EVERY header byte 0..74 (loop 75 times) → tag failure; tamper 3 ciphertext bytes → failure; version != 0x01 → reject; two encrypts with different nonce → different ciphertext; empty plaintext roundtrip; blob shorter than header → error. Must NOT: no compression; no plaintext metadata beyond header; no fixed nonce; no unwrap/panic.
   Parallelization: Wave 1 | Blocked by: T2 | Blocks: T6,T9,T10
   References: draft passm.md envelope decision (75-byte header ALL as AAD, tag at offset 75, uncompressed JSON payload); chacha20poly1305 0.11 docs https://docs.rs/chacha20poly1305/0.11.0/ (XChaCha20Poly1305, 24-byte XNonce); Android verification tool_fff2adeec001rpPEnbIck8LVzf L584 (pure Rust confirmed); Metis gap analysis in draft (byte-exactness pin).
@@ -110,7 +110,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: tamper test proves every header byte is authenticated; failure: flip a header byte in a fixture and run decrypt → error. Evidence `.omo/evidence/task-3-envelope.txt`.
   Commit: Y | feat(crypto): PASSM1 envelope with AAD-bound header
 
-- [ ] 4. passm-vault: Entry/Vault models + canonical serialization
+- [x] 4. passm-vault: Entry/Vault models + canonical serialization
   What to do / Must NOT do: In `crates/passm-vault`, define `Entry { id: Uuid, title: String, username: String, password: String, url: String, notes: String, version: u64, device_id: String, created_at: i64, updated_at: i64, deleted: bool }` and `Vault { entries: Vec<Entry> }` with serde derive (struct field order = stable key order). Provide `Entry::new(...) -> version=1, created_at/updated_at=now, deleted=false`, `bump()` (version+=1, updated_at=now), `mark_deleted()`. Provide `Vault::canonical_json() -> Vec<u8>` = serde_json::to_vec of a Vault whose entries are SORTED BY ID (stable). TDD: serde roundtrip; canonical_json byte-stable across two differently-ordered Vaults; id sort; new() defaults. Must NOT: no HashMap anywhere in serialization (order instability); no timestamps as String; no extra fields.
   Parallelization: Wave 1 | Blocked by: T1 | Blocks: T5,T6
   References: draft passm.md vault model + canonical-serialize decision; serde docs https://serde.rs/; uuid crate v4 docs https://docs.rs/uuid/.
@@ -118,7 +118,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: canonical_json of two orderings is byte-identical; failure: inserting HashMap-based serde → canonical test fails → fix. Evidence `.omo/evidence/task-4-vault.txt`.
   Commit: Y | feat(vault): Entry/Vault models with canonical JSON
 
-- [ ] 5. passm-vault: commutative merge (version + device_id + tombstone)
+- [x] 5. passm-vault: commutative merge (version + device_id + tombstone)
   What to do / Must NOT do: Implement `merge(local: &Vault, remote: &Vault) -> Vault` (pure function, no I/O). Rule per entry id: take higher version; if equal version AND one is tombstone (deleted=true) → tombstone wins (no-resurrect); if equal version AND both live → lexicographically higher device_id wins; entry only in one side → taken as-is. Result serialized canonically (sorted by id). TDD: disjoint merge; higher-version wins both directions; equal-version live-vs-live tiebreak by device_id (and reverse argument order gives same winner → commutativity); tombstone-vs-live equal version → tombstone wins, and reverse → same (no-resurrect); **convergence: merge(a,b) byte-identical to merge(b,a) for randomized inputs (property test, ≥50 random cases); idempotence: merge(merge(a,b), b) == merge(a,b)**; deleted entry with strictly higher version does not resurrect on later merge with older live copy. Must NOT: no I/O/side effects; no "local wins" special case (draft correction — equal version is device_id tiebreak, NOT local-wins); no unwrap/panic.
   Parallelization: Wave 1 | Blocked by: T4 | Blocks: T6,T10
   References: draft passm.md merge-rule decision (verbatim rule) + Metis finding (contradiction "local wins" → lexicographic device_id; tombstone wins equal-version; no-resurrect; canonical serialize; convergence proof required).
@@ -126,7 +126,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: random-input commutativity property test passes; failure: reintroduce local-wins → commutativity test fails. Evidence `.omo/evidence/task-5-merge.txt`.
   Commit: Y | feat(vault): commutative merge with version+device_id tiebreak
 
-- [ ] 6. passm-cli: core command-line harness (golden vectors + verification seam)
+- [x] 6. passm-cli: core command-line harness (golden vectors + verification seam)
   What to do / Must NOT do: In `crates/passm-cli` (bin), subcommands: `derive --password <pw> --salt <hex> [--params ...]` prints master+vault key hex (for vector pinning); `encrypt --in <file> --out <file> --password <pw>` (read JSON plaintext, derive fresh salt, write PASSM1 blob); `decrypt --in <file> --out <file> --password <pw>` (inverse; nonzero exit on wrong password); `vault-add --vault <file> ...` / `vault-list --vault <file>` for core CRUD without UI. Produce a committed fixture: `crates/passm-cli/tests/fixtures/vault.plain.json` + pinned golden ciphertext file + the constants asserted in T2/T3. Must NOT: no key/password echoed to stdout beyond `derive` (explicit dev command only); no storing of the test password anywhere; no network calls.
   Parallelization: Wave 1 | Blocked by: T2,T3,T4,T5 | Blocks: T12 (agent-executable verification of core commands)
   References: draft passm.md (golden vectors acceptance: harness encrypt/decrypt on fixture files); Metis gap analysis (UI automation seam: core covered via CLI harness, UI smoke via vitest + manual F3).
@@ -142,7 +142,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: cross-compile log ends with "Finished"; failure: compile error → try documented workaround (cargo-ndk -p/llvm-ar config) → if stuck, record fallback decision. Evidence `.omo/evidence/task-7-android-spike.md` + build log.
   Commit: N (spike; findings committed via evidence file + plan/draft update if fallback)
 
-- [ ] 8. keyring PAT store + persistent device_id
+- [x] 8. keyring PAT store + persistent device_id
   What to do / Must NOT do: In `crates/passm-sync`, `PatStore` over keyring 4.1.x: service `"passm"`, user `"github-pat"`, get/set/delete. Windows path = windows-native (default features); Android = `android-native-keyring-store` feature + Kotlin `io.crates.keyring.Keyring.initializeNdkContext(context)` wired in the Tauri Android project (Tauri 2.11+ removed auto ndk-context init — REQUIRED). `DeviceId`: UUIDv4 generated on first run, persisted to `<app_data>/device_id` (path via Tauri `path().app_data_dir()`), loaded on subsequent runs. TDD: PatStore get/set/delete against a mock/in-memory backend trait (so tests run on Linux CI); device_id persistence test (write → reload → same value; missing file → generates). Must NOT: PAT never written to disk outside keyring; never to .git/config; no hardcoded data_dir (use app_data_dir); no unwrap/panic.
   Parallelization: Wave 2 | Blocked by: T7 | Blocks: T9
   References: Android verification tool_fff2adeec001rpPEnbIck8LVzf L576-581 + L691-693 (keyring 4.1.6 android feature, ndk-context init Kotlin, Tauri 2.11 breakage, keyring-demo repo); keyring 4.1 docs https://docs.rs/keyring/4.1.6/keyring/; Tauri path API https://v2.tauri.app/reference/path/.
