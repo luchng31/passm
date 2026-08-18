@@ -34,7 +34,9 @@ pub struct AppPaths {
 /// Shared by the `lock` command, the tray Lock item, and the auto-lock timer.
 fn lock_session_state(app: &AppHandle) {
     let state = app.state::<Mutex<SessionState>>();
-    let mut guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     lock_session(&mut guard);
     let _ = app.clipboard().clear();
 }
@@ -47,7 +49,9 @@ struct SessionStatus {
 }
 
 fn session_status(state: &Mutex<SessionState>) -> SessionStatus {
-    let guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     SessionStatus {
         unlocked: guard.vault_key.is_some(),
         device_id: guard.device_id.clone(),
@@ -99,11 +103,15 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// session when `unlocked_at + AUTO_LOCK_TIMEOUT_SECS <= now`.
 fn spawn_auto_lock_timer(app: AppHandle) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(AUTO_LOCK_CHECK_INTERVAL_SECS));
+        std::thread::sleep(std::time::Duration::from_secs(
+            AUTO_LOCK_CHECK_INTERVAL_SECS,
+        ));
         let state = app.state::<Mutex<SessionState>>();
         let now = SystemClock.now_unix();
         let due = {
-            let guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             should_auto_lock(&guard, now, AUTO_LOCK_TIMEOUT_SECS)
         };
         if due {

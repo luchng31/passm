@@ -285,7 +285,10 @@ mod tests {
 
     fn random_vault(rng: &mut StdRng, id_pool: &[Uuid]) -> Vault {
         let n = rng.gen_range(0..=id_pool.len());
-        let entries = id_pool[..n].iter().map(|id| random_entry(rng, *id)).collect();
+        let entries = id_pool[..n]
+            .iter()
+            .map(|id| random_entry(rng, *id))
+            .collect();
         Vault { entries }
     }
 

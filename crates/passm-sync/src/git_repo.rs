@@ -44,14 +44,18 @@ fn pat_credentials(
 
 /// Opens the repository previously set up by `ensure_clone`.
 fn open_repo() -> Result<Repository, SyncError> {
-    let guard = REPO_DIR.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = REPO_DIR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = guard.as_deref().ok_or(SyncError::RepoNotInitialized)?;
     Repository::open(dir).map_err(SyncError::Git)
 }
 
 /// Returns the local repository directory set by `ensure_clone`.
 pub fn repo_dir() -> Result<PathBuf, SyncError> {
-    let guard = REPO_DIR.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = REPO_DIR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     guard.clone().ok_or(SyncError::RepoNotInitialized)
 }
 
@@ -72,9 +76,8 @@ fn current_branch_name(repo: &Repository) -> Option<String> {
 /// case. Errors only if HEAD is detached.
 pub fn current_branch() -> Result<String, SyncError> {
     let repo = open_repo()?;
-    current_branch_name(&repo).ok_or_else(|| {
-        SyncError::Git(git2::Error::from_str("cannot determine current branch"))
-    })
+    current_branch_name(&repo)
+        .ok_or_else(|| SyncError::Git(git2::Error::from_str("cannot determine current branch")))
 }
 
 /// Rejects absolute paths and paths escaping the working tree.
@@ -109,7 +112,9 @@ pub fn ensure_clone(remote_url: &str, local_dir: &Path, pat: &str) -> Result<(),
         fetch_opts.remote_callbacks(callbacks);
         let mut builder = RepoBuilder::new();
         builder.fetch_options(fetch_opts);
-        builder.clone(remote_url, local_dir).map_err(SyncError::Git)?;
+        builder
+            .clone(remote_url, local_dir)
+            .map_err(SyncError::Git)?;
     }
     let repo = Repository::open(local_dir).map_err(SyncError::Git)?;
     let origin_url = match repo.find_remote(REMOTE_NAME) {
@@ -120,7 +125,9 @@ pub fn ensure_clone(remote_url: &str, local_dir: &Path, pat: &str) -> Result<(),
         repo.remote_set_url(REMOTE_NAME, remote_url)
             .map_err(SyncError::Git)?;
     }
-    let mut guard = REPO_DIR.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = REPO_DIR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = Some(local_dir.to_path_buf());
     Ok(())
 }
@@ -225,9 +232,9 @@ pub fn remote_head() -> Result<Option<Oid>, SyncError> {
 pub fn read_vault_from_ref(refname: &str) -> Result<Vec<u8>, SyncError> {
     let repo = open_repo()?;
     let reference = repo.find_reference(refname).map_err(SyncError::Git)?;
-    let oid = reference.target().ok_or_else(|| {
-        SyncError::Git(git2::Error::from_str("ref has no commit target"))
-    })?;
+    let oid = reference
+        .target()
+        .ok_or_else(|| SyncError::Git(git2::Error::from_str("ref has no commit target")))?;
     let commit = repo.find_commit(oid).map_err(SyncError::Git)?;
     let tree = commit.tree().map_err(SyncError::Git)?;
     let entry = tree
@@ -311,7 +318,9 @@ pub fn commit_vault_merge(
     let tree = repo.find_tree(tree_oid).map_err(SyncError::Git)?;
     let signature = Signature::now(COMMIT_NAME, COMMIT_EMAIL).map_err(SyncError::Git)?;
     let local_oid = current_head()?.ok_or_else(|| {
-        SyncError::Git(git2::Error::from_str("merge requires an existing local commit"))
+        SyncError::Git(git2::Error::from_str(
+            "merge requires an existing local commit",
+        ))
     })?;
     let parents = [
         repo.find_commit(local_oid).map_err(SyncError::Git)?,
@@ -344,7 +353,9 @@ mod tests {
     /// Serializes git_repo tests: they share the module-global `REPO_DIR`, so
     /// parallel execution would make one test operate on another's repository.
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn bare_remote(parent: &Path) -> (PathBuf, String) {
@@ -362,7 +373,12 @@ mod tests {
         repo.head().unwrap().shorthand().unwrap().to_string()
     }
 
-    fn advance_remote(remote_dir: &Path, branch: &str, parent: Option<Oid>, contents: &[u8]) -> Oid {
+    fn advance_remote(
+        remote_dir: &Path,
+        branch: &str,
+        parent: Option<Oid>,
+        contents: &[u8],
+    ) -> Oid {
         let repo = Repository::open_bare(remote_dir).unwrap();
         let blob = repo.blob(contents).unwrap();
         let mut tb = repo.treebuilder(None).unwrap();
@@ -410,10 +426,7 @@ mod tests {
         ensure_clone(&url, &local, PAT).unwrap();
         ensure_clone(&url, &local, PAT).unwrap();
         let repo = Repository::open(&local).unwrap();
-        assert_eq!(
-            repo.find_remote("origin").unwrap().url().unwrap(),
-            url
-        );
+        assert_eq!(repo.find_remote("origin").unwrap().url().unwrap(), url);
     }
 
     #[test]
@@ -527,9 +540,6 @@ mod tests {
         )
         .unwrap();
         assert!(cred.has_username());
-        assert_eq!(
-            cred.credtype(),
-            CredentialType::USER_PASS_PLAINTEXT.bits()
-        );
+        assert_eq!(cred.credtype(), CredentialType::USER_PASS_PLAINTEXT.bits());
     }
 }

@@ -88,8 +88,7 @@ pub fn parse_header(blob: &[u8]) -> Result<EnvelopeHeader> {
         return Err(EnvelopeError::UnsupportedVersion(h[6]));
     }
     let mem_kib = u32::from_be_bytes(h[7..11].try_into().map_err(|_| EnvelopeError::TooShort)?);
-    let iterations =
-        u32::from_be_bytes(h[11..15].try_into().map_err(|_| EnvelopeError::TooShort)?);
+    let iterations = u32::from_be_bytes(h[11..15].try_into().map_err(|_| EnvelopeError::TooShort)?);
     let parallelism =
         u32::from_be_bytes(h[15..19].try_into().map_err(|_| EnvelopeError::TooShort)?);
     let salt: [u8; 32] = h[19..51].try_into().map_err(|_| EnvelopeError::TooShort)?;
@@ -155,7 +154,9 @@ pub fn encrypt(
 /// (wrong key, tampered header, or tampered ciphertext).
 pub fn decrypt(vault_key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
     parse_header(blob)?;
-    let nonce: [u8; 24] = blob[51..75].try_into().map_err(|_| EnvelopeError::TooShort)?;
+    let nonce: [u8; 24] = blob[51..75]
+        .try_into()
+        .map_err(|_| EnvelopeError::TooShort)?;
     let cipher = XChaCha20Poly1305::new(&Key::from(*vault_key));
     let payload = Payload {
         msg: &blob[HEADER_LEN..],
@@ -308,6 +309,10 @@ mod tests {
             PARAMS.parallelism
         );
         assert_eq!(&blob[19..51], &SALT);
-        assert_ne!(&blob[51..75], &[0u8; 24], "nonce must be fresh random bytes");
+        assert_ne!(
+            &blob[51..75],
+            &[0u8; 24],
+            "nonce must be fresh random bytes"
+        );
     }
 }

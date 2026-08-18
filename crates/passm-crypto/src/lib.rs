@@ -36,7 +36,12 @@ pub fn derive_master_key(
     let argon2 = Argon2::new(
         Algorithm::Argon2id,
         Version::V0x13,
-        Params::new(params.mem_kib, params.iterations, params.parallelism, Some(32))?,
+        Params::new(
+            params.mem_kib,
+            params.iterations,
+            params.parallelism,
+            Some(32),
+        )?,
     );
     let mut password_buf = password.to_vec();
     let mut master = [0u8; 32];

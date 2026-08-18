@@ -46,11 +46,16 @@ impl fmt::Display for SyncError {
             SyncError::Git(e) => write!(f, "git error: {e}"),
             SyncError::NonFastForward => write!(f, "push rejected: not a fast-forward"),
             SyncError::RepoNotInitialized => {
-                write!(f, "repository not initialized; call git_repo::ensure_clone first")
+                write!(
+                    f,
+                    "repository not initialized; call git_repo::ensure_clone first"
+                )
             }
             SyncError::Envelope(e) => write!(f, "envelope error: {e}"),
             SyncError::Json(e) => write!(f, "vault JSON error: {e}"),
-            SyncError::VaultMissing => write!(f, "vault.enc is missing from the local working tree"),
+            SyncError::VaultMissing => {
+                write!(f, "vault.enc is missing from the local working tree")
+            }
             SyncError::SyncRetryExhausted => {
                 write!(f, "sync retried 3 times and the remote kept advancing")
             }

@@ -75,8 +75,10 @@ mod tests {
 
     /// A session unlocked at t=100 with a fixed key and an empty vault.
     fn unlocked_state() -> SessionState {
-        let mut state = SessionState::default();
-        state.device_id = "dev-1".into();
+        let mut state = SessionState {
+            device_id: "dev-1".into(),
+            ..Default::default()
+        };
         unlock_session(&mut state, [0xAB; 32], Vault::empty(), 100);
         state
     }

@@ -104,7 +104,10 @@ fn encrypt_then_decrypt_roundtrips_fixture() {
 
     let original = std::fs::read(&plain).expect("read plaintext");
     let decrypted = std::fs::read(&out).expect("read decrypted");
-    assert_eq!(decrypted, original, "decrypt must reproduce the exact plaintext bytes");
+    assert_eq!(
+        decrypted, original,
+        "decrypt must reproduce the exact plaintext bytes"
+    );
 }
 
 #[test]
@@ -182,11 +185,23 @@ fn vault_add_then_list_shows_new_entry() {
     ]);
     assert_ok(&add, "vault-add");
 
-    let list = run(&["vault-list", "--vault", blob.to_str().unwrap(), "--password", PASSWORD]);
+    let list = run(&[
+        "vault-list",
+        "--vault",
+        blob.to_str().unwrap(),
+        "--password",
+        PASSWORD,
+    ]);
     assert_ok(&list, "vault-list");
     let stdout = String::from_utf8(list.stdout).expect("utf8 stdout");
-    assert!(stdout.contains("New Service"), "vault-list must show the added title");
-    assert!(stdout.contains("newuser"), "vault-list must show the added username");
+    assert!(
+        stdout.contains("New Service"),
+        "vault-list must show the added title"
+    );
+    assert!(
+        stdout.contains("newuser"),
+        "vault-list must show the added username"
+    );
 }
 
 #[test]
@@ -228,10 +243,9 @@ fn vault_add_preserves_existing_entries() {
 
     let after: Vault =
         serde_json::from_slice(&std::fs::read(&out).expect("read decrypted")).expect("parse vault");
-    let before: Vault = serde_json::from_slice(
-        &std::fs::read(fixture("vault.plain.json")).expect("read fixture"),
-    )
-    .expect("parse fixture");
+    let before: Vault =
+        serde_json::from_slice(&std::fs::read(fixture("vault.plain.json")).expect("read fixture"))
+            .expect("parse fixture");
 
     for entry in &before.entries {
         assert!(

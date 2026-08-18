@@ -153,7 +153,8 @@ fn conflict_merge(
     // 3. Decrypt both. A remote decrypt failure must NOT clobber the local
     //    vault — the backup is already safe and we return a typed error.
     let local_plaintext = envelope::decrypt(vault_key, &local_blob).map_err(SyncError::Envelope)?;
-    let remote_plaintext = envelope::decrypt(vault_key, &remote_blob).map_err(SyncError::Envelope)?;
+    let remote_plaintext =
+        envelope::decrypt(vault_key, &remote_blob).map_err(SyncError::Envelope)?;
     let local_vault: Vault = serde_json::from_slice(&local_plaintext).map_err(SyncError::Json)?;
     let remote_vault: Vault = serde_json::from_slice(&remote_plaintext).map_err(SyncError::Json)?;
 
@@ -294,7 +295,9 @@ mod tests {
     const SALT: [u8; 32] = [0x42; 32];
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn bare_remote(parent: &Path) -> (PathBuf, String) {
@@ -308,7 +311,12 @@ mod tests {
         parent.join("local")
     }
 
-    fn advance_remote(remote_dir: &Path, branch: &str, parent: Option<Oid>, contents: &[u8]) -> Oid {
+    fn advance_remote(
+        remote_dir: &Path,
+        branch: &str,
+        parent: Option<Oid>,
+        contents: &[u8],
+    ) -> Oid {
         let repo = Repository::open_bare(remote_dir).unwrap();
         let blob = repo.blob(contents).unwrap();
         let mut tb = repo.treebuilder(None).unwrap();
@@ -469,7 +477,10 @@ mod tests {
         assert!(outcome.pushed);
         assert!(!outcome.merged);
         assert!(outcome.backup_created.is_none());
-        assert_eq!(remote_vault(&remote_dir).canonical_json(), v2.canonical_json());
+        assert_eq!(
+            remote_vault(&remote_dir).canonical_json(),
+            v2.canonical_json()
+        );
     }
 
     #[test]
@@ -509,7 +520,10 @@ mod tests {
         assert!(outcome.backup_created.is_none());
 
         let local_blob = checkout_vault_file(VAULT_FILE).unwrap();
-        assert_eq!(decrypt_vault(&local_blob).canonical_json(), v2.canonical_json());
+        assert_eq!(
+            decrypt_vault(&local_blob).canonical_json(),
+            v2.canonical_json()
+        );
     }
 
     #[test]
@@ -681,7 +695,12 @@ mod tests {
                 .unwrap()
                 .target()
                 .unwrap();
-            advance_remote(&remote_dir_hook, "master", Some(current), &encrypt_vault(&v1_hook));
+            advance_remote(
+                &remote_dir_hook,
+                "master",
+                Some(current),
+                &encrypt_vault(&v1_hook),
+            );
         }));
 
         ensure_clone(&url, &local_b, PAT).unwrap();
@@ -733,7 +752,12 @@ mod tests {
                 .unwrap()
                 .target()
                 .unwrap();
-            advance_remote(&remote_dir_hook, "master", Some(current), &encrypt_vault(&v1_hook));
+            advance_remote(
+                &remote_dir_hook,
+                "master",
+                Some(current),
+                &encrypt_vault(&v1_hook),
+            );
             *PRE_PUSH.lock().unwrap() = None;
         }));
 

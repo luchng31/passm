@@ -65,18 +65,27 @@ pub struct MockPatStore {
 
 impl PatStore for MockPatStore {
     fn get(&self) -> Result<Option<String>, SyncError> {
-        let guard = self.pat.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .pat
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(guard.clone())
     }
 
     fn set(&self, pat: &str) -> Result<(), SyncError> {
-        let mut guard = self.pat.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self
+            .pat
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = Some(pat.to_string());
         Ok(())
     }
 
     fn delete(&self) -> Result<(), SyncError> {
-        let mut guard = self.pat.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self
+            .pat
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = None;
         Ok(())
     }

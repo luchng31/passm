@@ -60,7 +60,10 @@ impl From<&passm_sync::SyncOutcome> for SyncStatus {
             pushed: outcome.pushed,
             pulled: outcome.pulled,
             merged: outcome.merged,
-            backup_created: outcome.backup_created.as_ref().map(|p| p.display().to_string()),
+            backup_created: outcome
+                .backup_created
+                .as_ref()
+                .map(|p| p.display().to_string()),
         }
     }
 }
@@ -218,11 +221,7 @@ pub fn update_entry(
 }
 
 /// Tombstones a live entry (sync-safe delete) and bumps it.
-pub fn delete_entry(
-    vault: &mut Vault,
-    id: Uuid,
-    device_id: &str,
-) -> Result<Entry, CommandError> {
+pub fn delete_entry(vault: &mut Vault, id: Uuid, device_id: &str) -> Result<Entry, CommandError> {
     let entry = vault
         .entries
         .iter_mut()
@@ -236,7 +235,12 @@ pub fn delete_entry(
 
 /// Live entries sorted by id (deterministic; tombstones are sync artifacts).
 pub fn list_entries(vault: &Vault) -> Vec<Entry> {
-    let mut entries: Vec<Entry> = vault.entries.iter().filter(|e| !e.deleted).cloned().collect();
+    let mut entries: Vec<Entry> = vault
+        .entries
+        .iter()
+        .filter(|e| !e.deleted)
+        .cloned()
+        .collect();
     entries.sort_by_key(|e| e.id);
     entries
 }
@@ -317,7 +321,9 @@ pub fn reencrypt_vault(
 /// Reads the persisted sync config, if any.
 pub fn load_sync_config(data_dir: &Path) -> Result<Option<SyncConfig>, CommandError> {
     match fs::read(data_dir.join("sync_config.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(CommandError::Json),
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(CommandError::Json),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(CommandError::Io(e)),
     }
@@ -382,16 +388,14 @@ fn persist_vault(app: &AppHandle, state: &SessionState, msg: &str) -> Result<(),
 async fn sync_now_inner(app: &AppHandle) -> Result<SyncStatus, CommandError> {
     let state = app.state::<Mutex<SessionState>>();
     let (vault_key, device_id) = {
-        let guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let key = guard.vault_key.as_ref().ok_or(CommandError::Locked)?;
         (key.clone(), guard.device_id.clone())
     };
     let pat_store = passm_sync::KeyringPatStore::new()?;
-    let pat = Zeroizing::new(
-        pat_store
-            .get()?
-            .ok_or(CommandError::SyncNotConfigured)?,
-    );
+    let pat = Zeroizing::new(pat_store.get()?.ok_or(CommandError::SyncNotConfigured)?);
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         passm_sync::sync(&pat, &vault_key, &device_id)
     })
@@ -421,7 +425,9 @@ pub(crate) async fn unlock(app: AppHandle, password: String) -> Result<(), Comma
         passm_sync::device_id::load_or_create(&paths.data_dir).map_err(CommandError::Sync)?;
     let state = app.state::<Mutex<SessionState>>();
     {
-        let mut guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.device_id = device_id;
         unlock_session(&mut guard, vault_key, vault, SystemClock.now_unix());
     }
@@ -434,7 +440,9 @@ pub(crate) async fn unlock(app: AppHandle, password: String) -> Result<(), Comma
 #[tauri::command]
 pub(crate) async fn list(app: AppHandle) -> Result<Vec<Entry>, CommandError> {
     let state = app.state::<Mutex<SessionState>>();
-    let guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let vault = guard.vault.as_ref().ok_or(CommandError::Locked)?;
     Ok(list_entries(vault))
 }
@@ -443,7 +451,9 @@ pub(crate) async fn list(app: AppHandle) -> Result<Vec<Entry>, CommandError> {
 #[tauri::command]
 pub(crate) async fn get(app: AppHandle, id: String) -> Result<Entry, CommandError> {
     let state = app.state::<Mutex<SessionState>>();
-    let guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let vault = guard.vault.as_ref().ok_or(CommandError::Locked)?;
     let id = parse_entry_id(&id)?;
     get_entry(vault, id).ok_or(CommandError::EntryNotFound)
@@ -453,7 +463,9 @@ pub(crate) async fn get(app: AppHandle, id: String) -> Result<Entry, CommandErro
 #[tauri::command]
 pub(crate) async fn create(app: AppHandle, input: EntryInput) -> Result<Entry, CommandError> {
     let state = app.state::<Mutex<SessionState>>();
-    let mut guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let device_id = guard.device_id.clone();
     let entry = {
         let vault = guard.vault.as_mut().ok_or(CommandError::Locked)?;
@@ -466,9 +478,15 @@ pub(crate) async fn create(app: AppHandle, input: EntryInput) -> Result<Entry, C
 
 /// Update an entry, persist the vault, and commit.
 #[tauri::command]
-pub(crate) async fn update(app: AppHandle, id: String, input: EntryInput) -> Result<Entry, CommandError> {
+pub(crate) async fn update(
+    app: AppHandle,
+    id: String,
+    input: EntryInput,
+) -> Result<Entry, CommandError> {
     let state = app.state::<Mutex<SessionState>>();
-    let mut guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let device_id = guard.device_id.clone();
     let id = parse_entry_id(&id)?;
     let entry = {
@@ -484,7 +502,9 @@ pub(crate) async fn update(app: AppHandle, id: String, input: EntryInput) -> Res
 #[tauri::command]
 pub(crate) async fn delete(app: AppHandle, id: String) -> Result<Entry, CommandError> {
     let state = app.state::<Mutex<SessionState>>();
-    let mut guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let device_id = guard.device_id.clone();
     let id = parse_entry_id(&id)?;
     let entry = {
@@ -500,7 +520,9 @@ pub(crate) async fn delete(app: AppHandle, id: String) -> Result<Entry, CommandE
 #[tauri::command]
 pub(crate) async fn search(app: AppHandle, q: String) -> Result<Vec<Entry>, CommandError> {
     let state = app.state::<Mutex<SessionState>>();
-    let guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let vault = guard.vault.as_ref().ok_or(CommandError::Locked)?;
     Ok(search_entries(vault, &q))
 }
@@ -511,7 +533,9 @@ pub(crate) async fn search(app: AppHandle, q: String) -> Result<Vec<Entry>, Comm
 pub(crate) async fn copy(app: AppHandle, field: String, id: String) -> Result<(), CommandError> {
     let state = app.state::<Mutex<SessionState>>();
     let value = {
-        let guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let vault = guard.vault.as_ref().ok_or(CommandError::Locked)?;
         let id = parse_entry_id(&id)?;
         let entry = get_entry(vault, id).ok_or(CommandError::EntryNotFound)?;
@@ -623,7 +647,8 @@ mod tests {
     fn update_entry_bumps_version_and_updates_fields() {
         let mut vault = Vault::empty();
         let created = create_entry(&mut vault, &input("GitHub", "alice"), "dev-1");
-        let updated = update_entry(&mut vault, created.id, &input("GitLab", "bob"), "dev-2").unwrap();
+        let updated =
+            update_entry(&mut vault, created.id, &input("GitLab", "bob"), "dev-2").unwrap();
         assert_eq!(updated.version, 2);
         assert_eq!(updated.title, "GitLab");
         assert_eq!(updated.username, "bob");
@@ -701,8 +726,16 @@ mod tests {
     #[test]
     fn search_multi_term_requires_all_terms() {
         let mut vault = Vault::empty();
-        create_entry(&mut vault, &input("GitHub Login", "alice@example.com"), "dev-1");
-        create_entry(&mut vault, &input("GitLab Login", "bob@example.com"), "dev-1");
+        create_entry(
+            &mut vault,
+            &input("GitHub Login", "alice@example.com"),
+            "dev-1",
+        );
+        create_entry(
+            &mut vault,
+            &input("GitLab Login", "bob@example.com"),
+            "dev-1",
+        );
         assert_eq!(search_entries(&vault, "github alice").len(), 1);
         assert_eq!(search_entries(&vault, "github bob").len(), 0);
         assert_eq!(search_entries(&vault, "login").len(), 2);
@@ -888,7 +921,10 @@ mod tests {
         assert_eq!(CommandError::WrongPassword.to_string(), "密码错误");
         assert_eq!(CommandError::SyncNotConfigured.to_string(), "同步未配置");
         assert_eq!(CommandError::EntryNotFound.to_string(), "条目不存在");
-        assert_eq!(CommandError::VaultFileMissing.to_string(), "保险库文件不存在");
+        assert_eq!(
+            CommandError::VaultFileMissing.to_string(),
+            "保险库文件不存在"
+        );
         assert_eq!(
             CommandError::Sync(SyncError::PatMissing).to_string(),
             "同步未配置"
