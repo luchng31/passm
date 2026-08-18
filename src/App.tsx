@@ -20,6 +20,24 @@ export function App() {
       });
   }, []);
 
+  // Poll the backend session state so tray "Lock" and the auto-lock timer
+  // (both run in Rust, outside the webview) transition the UI to the Unlock
+  // screen the same way the manual lock button does. Cheap local IPC call.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      getSessionStatus()
+        .then((s) => {
+          setStatus((prev) =>
+            prev !== null && prev.unlocked === s.unlocked && prev.device_id === s.device_id
+              ? prev
+              : s,
+          );
+        })
+        .catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   if (status === null) {
     return <div className="app-loading">加载中…</div>;
   }

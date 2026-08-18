@@ -5,7 +5,8 @@
   "identifier": "com.passm.app",
   "build": {
     "frontendDist": "../dist",
-    "beforeDevCommand": "",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": ""
   },
   "app": {
