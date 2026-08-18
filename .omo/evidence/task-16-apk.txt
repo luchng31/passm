@@ -1,0 +1,60 @@
+Task 16: Android APK — tauri android build + signing + manifest
+Date: 2026-08-18
+Status: DONE — verified
+
+## Deliverables
+- `tauri android init` → gen/android/ (Tauri 2 Android project, gradle wrapper 8.14.3).
+- INTERNET permission added to AndroidManifest.xml (src-tauri/gen/android/app/src/main/
+  AndroidManifest.xml): `<uses-permission android:name="android.permission.INTERNET"/>`.
+- Keyring Kotlin init wired in MainActivity.kt onCreate:
+  `Keyring.initializeNdkContext(applicationContext)` (import io.crates.keyring.Keyring).
+- passm-sync Cargo.toml: enabled "android-native-keyring-store" feature (target-gated to
+  android in keyring 4.1.x; safe for linux/macos — no-op elsewhere).
+- src-tauri/Cargo.toml: lib name "passm_app_lib", crate-type staticlib+cdylib+rlib
+  (mobile build requirement); main.rs updated to call passm_app_lib::run().
+- lib.rs: tray/menu/desktop-only items behind #[cfg(desktop)] for mobile builds.
+- Build restricted to arm64-v8a (`tauri android build --apk -t aarch64`) — the only
+  ABI needed on modern devices; openssl-src x86_64-linux-android misconfiguration
+  (SM3/SM4 AVX512 asm) breaks the other x86 ABIs (documented in learnings.md).
+
+## APK artifact
+- Path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk (15.2 MB)
+- Signed with debug keystore (~/.android/debug.keystore, CN=Android Debug, RSA 2048,
+  10000 days) via apksigner.
+- `apksigner verify --print-certs`:
+  Signer #1 certificate DN: CN=Android Debug, O=Android, C=US
+  Signer #1 SHA-256: 365fe2c8d36c6e379cd68baff76c3d907a051e9bb1a07aae5c87a8dba60dd843
+- aapt2 dump permissions: `uses-permission: name='android.permission.INTERNET'` present
+  in the final APK.
+- Merged manifest contains INTERNET (confirmed in build/intermediates/merged_manifests/).
+
+## Build journey (blockers hit and resolved)
+1. OOM kills (3.8Gi box) → CARGO_BUILD_JOBS=2 + gradle jvmargs -Xmx1024m + setsid nohup.
+2. openssl-sys make: "aarch64-linux-android-ranlib: not found" → created /tmp/ndk-bin
+   symlinks for all 4 ABI triples + exported CC/AR/RANLIB_<triple> env vars.
+3. gradle rustBuild task: "Cannot find module /home/ubuntu/passm/src-tauri/tauri" →
+   src-tauri/tauri must be a symlink to ../node_modules/@tauri-apps/cli/tauri.js
+   (node shim file fails: project is ESM; require() throws).
+4. gradle wrapper distribution download failed (Java SSL + curl CDN both blocked) →
+   user manually downloaded gradle-8.14.3-bin.zip (137 MB); placed in
+   ~/.gradle/wrapper/dists/gradle-8.14.3-bin/cv11ve7ro1n3o1j4so8xd9n66/.
+5. x86_64/armv7/i686 openssl asm breakage → arm64-only build (-t aarch64).
+6. Tauri release buildType has no signingConfig → unsigned APK → manual apksigner sign
+   with debug keystore (per plan v1: debug signing only).
+
+## Caveats / notes
+- "Unknown source" install warning applies (signed with debug keystore, not Play
+  Store) — document for end users.
+- No Play Store / keystore purchase (plan v1). No obfuscation beyond Tauri defaults
+  (minify enabled by Tauri template release buildType).
+- gen/android build outputs gitignored; only source files (MainActivity.kt,
+  AndroidManifest.xml, gradle config) committed.
+- Real-device smoke deferred to F3 (no emulator/device on this box); APK artifact
+  verified by apksigner + aapt2 as the agent-executable acceptance.
+
+## Commands (PATH: /tmp/ndk-bin, ~/.cargo/bin; env: ANDROID_HOME, ANDROID_NDK_HOME, JAVA_HOME)
+tauri android build --apk -t aarch64
+apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android --key-pass pass:android \
+  --out app-universal-release.apk app-universal-release-unsigned.apk
+apksigner verify --print-certs app-universal-release.apk
+aapt2 dump permissions app-universal-release.apk

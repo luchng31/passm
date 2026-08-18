@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+# Required for mobile builds: tauri android build looks for the cdylib
+# artifact (libpassm_app_lib.so) produced for each Android target.
+[lib]
+name = "passm_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

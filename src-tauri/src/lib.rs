@@ -9,7 +9,9 @@ mod session;
 use session::{lock_session, should_auto_lock, Clock, SessionState, SystemClock};
 use std::path::PathBuf;
 use std::sync::Mutex;
+#[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem};
+#[cfg(desktop)]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -53,6 +55,7 @@ fn session_status(state: &Mutex<SessionState>) -> SessionStatus {
 }
 
 /// Focus the main window (tray Show / tray icon click).
+#[cfg(desktop)]
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -62,6 +65,7 @@ fn show_main_window(app: &AppHandle) {
 }
 
 /// Build the tray icon with Show / Lock / Quit menu items.
+#[cfg(desktop)]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
     let lock = MenuItem::with_id(app, "lock", "Lock", true, None::<&str>)?;
@@ -132,6 +136,7 @@ pub fn run() -> tauri::Result<()> {
             let data_dir = app.path().app_data_dir()?;
             app.manage(AppPaths { data_dir });
             app.manage(Mutex::new(SessionState::default()));
+            #[cfg(desktop)]
             setup_tray(app)?;
             spawn_auto_lock_timer(app.handle().clone());
             Ok(())

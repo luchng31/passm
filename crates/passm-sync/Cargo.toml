@@ -10,10 +10,12 @@ git2.workspace = true
 serde.workspace = true
 uuid.workspace = true
 # keyring 4.1.x: windows-native-keyring-store for the Windows desktop build.
-# Android uses the android-native-keyring-store feature + Kotlin
-# initializeNdkContext init (wired in T16, NOT enabled here - it would
-# break linux/macos builds).
-keyring = { workspace = true, features = ["windows-native-keyring-store"] }
+# android-native-keyring-store is a no-op on non-Android targets (the store
+# crate is target-gated to cfg(target_os = "android") in keyring's Cargo.toml),
+# so enabling it here is safe for linux/macos. On Android it links the JNI
+# store backend that MainActivity.kt initializes via
+# io.crates.keyring.Keyring.initializeNdkContext (wired in T16).
+keyring = { workspace = true, features = ["windows-native-keyring-store", "android-native-keyring-store"] }
 passm-crypto = { path = "../passm-crypto" }
 passm-vault = { path = "../passm-vault" }
 serde_json = "1"
