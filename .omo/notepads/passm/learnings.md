@@ -122,3 +122,24 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - **PAT hygiene**: keyring PATs wrapped in `Zeroizing` in `sync_now_inner` and `set_sync_config`; unlock password wrapped too. `set_sync_config` runs `ensure_clone` FIRST so a bad URL persists nothing.
 - **Cheap KDF params for unlock tests**: fixture blobs use `KdfParams { mem_kib: 1024, iterations: 1, parallelism: 1 }` (stored in the header, so `unlock_vault` reads them) → derives are ~ms instead of 1-2s. Never loop default-params derives in tests.
 - Evidence: .omo/evidence/task-12-commands.txt
+
+## [2026-08-18] User provided real vault sync repo
+- User created private vault repo: https://github.com/luchng31/passm-vault (Contents R+W fine-grained PAT configured).
+- NOT YET needed: current tasks (T13 frontend, T14 dev smoke, T15 CI, T16 APK) use file:// remotes or no network. Real GitHub sync verification happens at T17/F3 — request the PAT from the user at that point.
+- PAT handling when it arrives: use env var only, never write to files/logs; pass via keyring (KeyringPatStore) in the app, never into .git/config or URLs.
+
+## [2026-08-18] T13 done: React 18 + TS strict + Vite frontend (unlock/list/editor/copy/sync)
+- **Toolchain**: node v24.18.1 + npm 11.16.0 at `/home/ubuntu/.nvm/versions/node/v24.18.1/bin` (add to PATH for all npm commands). npm 11 warns about esbuild's postinstall ("allow-scripts") but the binary still lands — don't chase the warning.
+- **Version lock**: vite ^5.4 + vitest ^1.6 (vitest 1.x is the pairing for vite 5; vitest 2+ wants vite 6), @testing-library/react ^14 (React 18 pairing — RTL 15/16 target React 19), jsdom ^24, react 18.3. `defineConfig` must come from `vitest/config` (not `vite`) to type the `test` key.
+- **`delete` is a reserved word in JS/TS** — the wrapper for the backend `delete` command must be `deleteEntry(id)`; the invoke string stays `'delete'`. Documented in api.ts.
+- **Tauri 2 arg mapping**: `invoke('set_sync_config', { remoteUrl, pat })` maps camelCase JS → snake_case Rust (`remote_url`) automatically. Single-word args (field, id, q) pass through unchanged.
+- **@tauri-apps/api/core import is jsdom-safe**: `invoke` only touches `window.__TAURI_INTERNALS__` at call time, so importing the module in vitest never throws — but component tests still vi.mock('../lib/api') so no test depends on that.
+- **vi.mock factory can reference `vi` directly** (`vi.mock('../lib/api', () => ({ list: vi.fn(), ... }))`) — only top-level *user* variables need the `mock` prefix. `vi.mocked(list).mockResolvedValue(...)` then types the mock per-call.
+- **XSS boundary test**: rendering `<script>window.__pwned = true</script>` as a JSX text child → React escapes; `screen.findByText(evil)` matches the literal string while `document.querySelector('script')` is null. This is the contract test for "no dangerouslySetInnerHTML".
+- **No window.confirm in webview UI**: Tauri webkit2gtk supports it, but an inline two-step `ConfirmButton` (label → 确认/取消) is testable and avoids native-dialog quirks. Same pattern for delete in list rows and editor.
+- **Client-side search mirrors backend**: `filterEntries` re-implements `search_entries` semantics (trim → lowercase → whitespace terms, every term must match title|username|url) so the list filters instantly; the `search` invoke wrapper exists in api.ts for the contract but the UI never needs the round-trip.
+- **useCopyTimer with fake timers**: hook returns `{ copiedField, copiedId, copyWithTimer }`; tests use `vi.useFakeTimers()` + `act(() => vi.advanceTimersByTime(2000))` — re-copy restarts the timer (assert state survives a partial advance). Cleanup clears the timeout on unmount.
+- **SessionContext shape**: `{ unlocked, deviceId, setUnlocked }` — App owns the `getSessionStatus()` fetch, Header consumes the context for the 锁定 button, Unlock calls `setUnlocked(true)` after invoke. No prop drilling, no router.
+- **React 18 createRoot + StrictMode double-invoke**: effects run twice in dev — `VaultList.load()` is idempotent (setEntries from list()) so double-fetch is harmless; keep load callbacks pure-ish and `useCallback`-stable.
+- **build script `tsc && vite build`** with noEmit tsconfig — tsc is the strict gate (no any / no @ts-ignore enforced), vite build the bundle gate. dist/ (gitignored) now holds real Vite output; tauri.conf.json frontendDist "../dist" picks it up unchanged.
+- Evidence: .omo/evidence/task-13-frontend.txt
