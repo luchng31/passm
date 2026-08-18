@@ -45,10 +45,6 @@ impl Clock for SystemClock {
 
 /// Unlock the session: store the key (zeroized on drop), the decrypted vault,
 /// and stamp the unlock time. Pure — no I/O, no Tauri runtime.
-///
-/// Not yet wired to a Tauri command (T12 adds the unlock flow); remove the
-/// `expect` below once a caller exists.
-#[expect(dead_code)]
 pub fn unlock_session(state: &mut SessionState, vault_key: [u8; 32], vault: Vault, now: u64) {
     state.vault_key = Some(Zeroizing::new(vault_key));
     state.vault = Some(vault);

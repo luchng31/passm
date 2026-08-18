@@ -11,8 +11,17 @@ tauri-build = "2"
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-clipboard-manager = "2"
+passm-crypto = { path = "../crates/passm-crypto" }
+passm-sync = { path = "../crates/passm-sync" }
 passm-vault = { path = "../crates/passm-vault" }
+# argon2 is a transitive dep of passm-crypto; named directly to type argon2::Error.
+argon2.workspace = true
+rand.workspace = true
 serde.workspace = true
 # serde_json is not a workspace dep; needed for command payloads.
 serde_json = "1"
+uuid.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

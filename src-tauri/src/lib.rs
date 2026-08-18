@@ -3,6 +3,7 @@
 //! All testable logic lives in [`session`] as pure functions; this module only
 //! wires them into Tauri commands, the tray menu, and the auto-lock timer.
 
+pub(crate) mod commands;
 mod session;
 
 use session::{lock_session, should_auto_lock, Clock, SessionState, SystemClock};
@@ -11,6 +12,7 @@ use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 /// Default auto-lock timeout: 5 minutes after unlock/last activity.
 pub const AUTO_LOCK_TIMEOUT_SECS: u64 = 300;
@@ -25,11 +27,14 @@ pub struct AppPaths {
     pub data_dir: PathBuf,
 }
 
-/// Lock the session, zeroizing the vault key and dropping the decrypted vault.
+/// Lock the session, zeroizing the vault key and dropping the decrypted vault,
+/// and clear the clipboard (a copied secret must not outlive the session).
 /// Shared by the `lock` command, the tray Lock item, and the auto-lock timer.
-fn lock_session_state(state: &Mutex<SessionState>) {
+fn lock_session_state(app: &AppHandle) {
+    let state = app.state::<Mutex<SessionState>>();
     let mut guard = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     lock_session(&mut guard);
+    let _ = app.clipboard().clear();
 }
 
 /// Snapshot of the session for the frontend (no secrets).
@@ -68,10 +73,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main_window(app),
-            "lock" => {
-                let state = app.state::<Mutex<SessionState>>();
-                lock_session_state(state.inner());
-            }
+            "lock" => lock_session_state(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -101,7 +103,7 @@ fn spawn_auto_lock_timer(app: AppHandle) {
             should_auto_lock(&guard, now, AUTO_LOCK_TIMEOUT_SECS)
         };
         if due {
-            lock_session_state(state.inner());
+            lock_session_state(&app);
         }
     });
 }
@@ -109,8 +111,7 @@ fn spawn_auto_lock_timer(app: AppHandle) {
 /// Lock the session (same path as the tray Lock item and the auto-lock timer).
 #[tauri::command]
 async fn lock(app: AppHandle) -> Result<(), String> {
-    let state = app.state::<Mutex<SessionState>>();
-    lock_session_state(state.inner());
+    lock_session_state(&app);
     Ok(())
 }
 
@@ -135,6 +136,21 @@ pub fn run() -> tauri::Result<()> {
             spawn_auto_lock_timer(app.handle().clone());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![lock, get_session_status])
+        .invoke_handler(tauri::generate_handler![
+            lock,
+            get_session_status,
+            commands::unlock,
+            commands::list,
+            commands::get,
+            commands::create,
+            commands::update,
+            commands::delete,
+            commands::search,
+            commands::copy,
+            commands::generate_password,
+            commands::sync_now,
+            commands::get_sync_config,
+            commands::set_sync_config
+        ])
         .run(tauri::generate_context!())
 }

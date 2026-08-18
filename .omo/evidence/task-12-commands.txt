@@ -1,0 +1,126 @@
+T12 — Backend commands (unlock/lock/CRUD/search/copy/generate/sync/config)
+==========================================================================
+Date: 2026-08-18
+Status: DONE — tests/clippy/build/workspace all green, committed atomically.
+
+API (src-tauri/src/commands.rs) — frontend contract for T13
+-----------------------------------------------------------
+Commands (all async, typed Result<_, CommandError>; CommandError serializes
+to its Chinese display string so the frontend can toast it directly):
+- unlock(password: String) -> ()            — derive key from header salt+params,
+  decrypt vault.enc, load device_id, unlock_session, then best-effort sync
+  (unlock succeeds even offline; sync errors ignored).
+- lock() -> ()                              — kept in lib.rs (T11), now also clears
+  the clipboard (copied secrets must not outlive the session).
+- list() -> Vec<Entry>                      — live entries sorted by id.
+- get(id: String) -> Entry                  — live entry by id.
+- create(input: EntryInput) -> Entry        — Entry::new + version 1.
+- update(id: String, input: EntryInput) -> Entry — find live, update fields,
+  record device_id, bump().
+- delete(id: String) -> Entry               — mark_deleted + device_id + bump.
+- search(q: String) -> Vec<Entry>           — case-insensitive multi-term AND
+  match over title/username/url.
+- copy(field: String, id: String) -> ()     — field in {password,username,url};
+  clipboard write + 30s auto-clear thread (clears only if value unchanged).
+- generate_password(length: u32) -> String  — OsRng, charset A-Za-z0-9+symbols,
+  length clamped 8..=128.
+- sync_now() -> SyncStatus                  — sync(pat, vault_key, device_id) on
+  the blocking thread pool; SyncStatus = serializable projection of SyncOutcome
+  {pushed, pulled, merged, backup_created}.
+- get_sync_config() -> Option<SyncConfig>   — {remote_url} from
+  <data_dir>/sync_config.json.
+- set_sync_config(remote_url, pat) -> ()    — ensure_clone FIRST (fail = nothing
+  persisted), then PAT -> KeyringPatStore, then remote_url -> config store.
+
+Payloads: EntryInput {title, username, password, url, notes} (all required,
+empty allowed). SyncConfig {remote_url}. SyncStatus {pushed, pulled, merged,
+backup_created: Option<String>}.
+
+Pure functions (no Tauri runtime — unit-tested):
+- unlock_vault(password, blob) -> Result<(Vault, [u8;32])> — parse_header ->
+  derive_master_key -> derive_vault_key -> decrypt -> parse Vault. Wrong
+  password (AuthenticationFailed) -> CommandError::WrongPassword ("密码错误");
+  corrupt blob (BadMagic/TooShort/UnsupportedVersion) -> "保险库文件损坏".
+- create_entry / update_entry / delete_entry / list_entries / get_entry.
+  update/delete return Result<Entry, CommandError> (spec's bare `-> Entry`
+  cannot express not-found; EntryNotFound = "条目不存在"). list/get exclude
+  tombstones; list sorts by id.
+- search_entries(vault, q) — whitespace-split terms, all must match (AND),
+  case-insensitive, on title/username/url.
+- generate_password_pure(length) — rejection sampling (range = 256 - 256 %
+  charset.len()) avoids modulo bias; clamp 8..=128.
+- should_clear_clipboard(original, current) — true iff unchanged.
+- reencrypt_vault(vault_key, current_blob, vault) — T6 salt invariant: reuses
+  parse_header(current_blob) params+salt, only nonce fresh.
+- load_sync_config / save_sync_config — JSON at <data_dir>/sync_config.json.
+
+Design decisions
+----------------
+- Salt invariant (T6) enforced in persist_vault: every CRUD mutation re-encrypts
+  with the CURRENT vault.enc blob's header salt+params (only nonce fresh), so
+  the password keeps unlocking the vault.
+- persist_vault writes vault.enc directly (works without a repo), then
+  commit_vault_file("vault.enc", "create|update|delete: <title>"). On
+  RepoNotInitialized it tries ensure_repo_ready (offline-safe open of an
+  existing repo) once; if sync is still not configured the commit is skipped
+  and the local save stands ("同步未配置" note).
+- ensure_repo_ready: passm_sync's repo handle is process-lifetime state that is
+  empty after an app restart. On unlock (best-effort) and on commit retry it
+  re-opens <data_dir>/repo via ensure_clone when .git exists — offline-safe
+  (no network when the repo already exists).
+- sync_now_inner runs the blocking git work on tauri::async_runtime::
+  spawn_blocking so the async runtime is never blocked by network I/O.
+- PAT hygiene: keyring PATs are wrapped in Zeroizing in sync_now_inner and
+  set_sync_config; the unlock password is Zeroizing-wrapped. PAT is never
+  written to the repo or config (ensure_clone passes it via credential
+  callback only).
+- Clipboard: copy spawns a 30s thread that reads the clipboard and clears it
+  only if it still holds the copied value (user may have copied something
+  else). lock_session_state (shared by lock command / tray Lock / auto-lock
+  timer) clears the clipboard unconditionally.
+- CommandError serializes to its Display string (manual Serialize impl), so
+  the frontend receives the Chinese message directly.
+- generate_handler! requires the commands module to be pub(crate) and command
+  fns pub(crate) (the generated __cmd__ macros must be importable from lib.rs).
+
+Tests (25 new in commands.rs + 5 session = 30 in passm-app)
+-----------------------------------------------------------
+1. create_entry_adds_version_1_entry
+2. update_entry_bumps_version_and_updates_fields
+3. update_entry_missing_id_errors (Chinese "条目不存在")
+4. delete_entry_marks_tombstone_and_bumps
+5. delete_entry_missing_id_errors
+6. list_entries_excludes_deleted_and_sorts_by_id
+7. get_entry_returns_entry_and_none_for_deleted_or_missing
+8. search_is_case_insensitive
+9. search_multi_term_requires_all_terms
+10. search_excludes_deleted_entries
+11. search_empty_query_returns_all_live_entries
+12. generate_password_respects_length
+13. generate_password_clamps_length (4->8, 200->128)
+14. generate_password_uses_only_charset (20 samples)
+15. generate_password_different_outputs
+16. unlock_vault_correct_password_succeeds (cheap KdfParams fixture)
+17. unlock_vault_wrong_password_errors_with_chinese_message ("密码错误")
+18. unlock_vault_corrupt_blob_errors ("保险库文件损坏")
+19. reencrypt_reuses_header_salt_and_params (T6 invariant pinned)
+20. crud_mutation_survives_reencrypt_roundtrip
+21. should_clear_clipboard_true_when_value_unchanged
+22. should_clear_clipboard_false_when_value_changed
+23. save_then_load_sync_config_roundtrip
+24. load_missing_sync_config_returns_none
+25. chinese_error_messages (请先解锁/密码错误/同步未配置/条目不存在/保险库文件不存在)
+
+TDD flow: tests written first -> RED (57 compile errors, missing functions) ->
+implement -> GREEN (30/30). Clippy fixes: unused imports, WrongPassword variant
+now constructed in unlock_vault (AuthenticationFailed -> WrongPassword).
+
+Verification (PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH")
+-------------------------------------------------------------
+- cargo test -p passm-app        -> 30/30 passed
+- cargo clippy -p passm-app -- -D warnings -> clean
+- cargo build -p passm-app       -> Finished dev profile
+- cargo test --workspace         -> all green: 30+6+17+29+14 passed, 1 ignored
+  (keyring PAT store test, ignored as before)
+
+Commit: feat(app): core Tauri commands
