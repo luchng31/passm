@@ -1,0 +1,70 @@
+T11 — Tauri app shell (window, tray, auto-lock, session state)
+===============================================================
+Date: 2026-08-17
+Status: DONE — tests/clippy/build/workspace all green, committed atomically.
+
+API (src-tauri/src/session.rs)
+------------------------------
+- SessionState { vault_key: Option<Zeroizing<[u8;32]>>, vault: Option<Vault>,
+  device_id: String, unlocked_at: Option<u64> } — in-memory only, never persisted.
+  vault_key is zeroized on drop via Zeroizing; lock_session drops key+vault and
+  clears unlocked_at.
+- Pure fns (no Tauri runtime, unit-testable):
+  * unlock_session(state, key, vault, now) — stores key (Zeroizing), vault, stamps
+    unlocked_at. NOT yet wired to a command (T12 unlock flow); carries
+    #[expect(dead_code)] until then.
+  * lock_session(state) — drops key (zeroized) + vault, clears unlocked_at.
+  * should_auto_lock(state, now, timeout_secs) — true iff unlocked and
+    unlocked_at.saturating_add(timeout_secs) <= now. Locked session never auto-locks.
+- Clock trait { now_unix() } + SystemClock (wall clock via SystemTime/UNIX_EPOCH)
+  so auto-lock timing is testable without sleeps.
+- AUTO_LOCK_TIMEOUT_SECS = 300 (5 min), check interval 30s.
+
+Tauri wiring (src-tauri/src/lib.rs)
+-----------------------------------
+- Commands: `lock` (zeroizes key via lock_session_state), `get_session_status`
+  (returns { unlocked, device_id } — no secrets). Registered via generate_handler!.
+- Tray: MenuItem::with_id("show"/"lock"/"quit") + on_menu_event match on
+  event.id().as_ref(); left-click on tray icon (TrayIconEvent::Click, Left/Up)
+  shows the main window. show_menu_on_left_click(false).
+- Auto-lock: background thread sleeps 30s, checks should_auto_lock with
+  SystemClock.now_unix(), locks when due.
+- AppPaths { data_dir: PathBuf } resolved once in setup via
+  app.path().app_data_dir() and managed (T12 repo/backups/device_id live under it).
+- tauri_plugin_clipboard_manager::init() registered.
+- SessionState managed as tauri::State<Mutex<SessionState>>; poisoned mutexes
+  recovered via unwrap_or_else(|p| p.into_inner()) — no panics in non-test code.
+
+tauri.conf.json
+---------------
+- productName passm, identifier com.passm.app, version 0.1.0.
+- Window "main": 1000x700, min 800x600, resizable, centered.
+- frontendDist ../dist (placeholder index.html only — real frontend is T13).
+- Bundle icons: 32x32.png, 128x128.png, 128x128@2x.png, icon.icns, icon.ico.
+
+Icons (src-tauri/icons/)
+------------------------
+Generated: 32x32.png, 128x128.png, 128x128@2x.png, icon.icns, icon.ico, icon.png.
+
+Tests (5/5 in src-tauri/src/session.rs)
+---------------------------------------
+1. lock_session_zeroizes_key_and_drops_vault — key/vault/unlocked_at all None after lock.
+2. should_auto_lock_false_before_timeout — unlocked_at=100, timeout=300, now=399 -> false.
+3. should_auto_lock_true_at_or_after_timeout — now=400 and 401 -> true.
+4. should_auto_lock_false_when_locked — locked session never auto-locks (now=999999).
+5. unlock_session_sets_key_vault_and_timestamp — unlock at t=42 stores all three.
+
+FIXED during verification: test 2 originally asserted now=400 (100+300) is NOT due,
+contradicting test 3 (impl is `unlocked_at + timeout <= now`, so 400 IS due).
+Changed to now=399 (100+299) + updated comment. Implementation untouched.
+
+Verification (PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH")
+-------------------------------------------------------------
+- cargo test -p passm-app        -> 5/5 passed (lib) + 0 bin + 0 doc
+- cargo clippy -p passm-app -- -D warnings -> clean
+  (added #[expect(dead_code)] on unlock_session — unwired until T12)
+- cargo build -p passm-app       -> Finished dev profile (Tauri 2 compiles)
+- cargo test --workspace         -> all green: 5+6+17+29+14 passed, 1 ignored
+  (keyring PAT store test, ignored as before)
+
+Commit: feat(app): Tauri shell with tray, auto-lock, session state
