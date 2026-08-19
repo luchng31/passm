@@ -1,0 +1,43 @@
+Task 15: CI pipeline — test gates + Windows MSI artifact
+Date: 2026-08-18
+Status: IN PROGRESS — workflow created, awaiting first run
+
+## Deliverables
+- `.github/workflows/ci.yml`:
+  - job `test` (ubuntu-latest): rust stable + node 22; gates:
+    `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+    `cargo test --workspace`, `npx tsc --noEmit`, `vitest run` (npm test).
+  - job `windows-msi` (windows-latest): `npm ci` + `npm run build` (frontend) +
+    `npx tauri build --bundles msi` → WiX MSI at
+    `src-tauri/target/release/bundle/msi/*.msi` (WiX v3 auto-downloaded by
+    tauri-bundler), uploaded as artifact `passm-windows-msi`.
+- `rust-toolchain.toml`: pins stable + clippy, rustfmt components.
+- No secrets in workflow (PAT is user-supplied at runtime, never in CI).
+- MSI unsigned on purpose (plan v1); SmartScreen warning expected — README/evidence
+  notes this.
+
+## Local gate verification (pre-push, all green)
+- cargo fmt --check: PASS (after `cargo fmt` cleanup — 52 diffs from current stable rustfmt)
+- cargo clippy --workspace --all-targets -- -D warnings: PASS
+  (fixed one clippy::field_reassign_with_default in session.rs test helper)
+- cargo test --workspace: PASS — 96 tests (30+6+17+29+14), 0 failed
+- npx tsc --noEmit: PASS
+- vitest run: PASS — 10/10
+
+## Push & CI trigger
+- Pushed `7253420..c9cedb4` (T14 integration + T16 android + this CI commit) to
+  github.com/luchng31/passm main via SSH.
+- Workflow `CI` registered as active (id 336838812).
+- NOTE: first push carrying the workflow file does NOT create a run (workflow not
+  yet registered at event time). Re-push required to trigger.
+
+## CI run verification (fill after run completes)
+- Run URL: TBD
+- test job conclusion: TBD
+- windows-msi job conclusion: TBD
+- MSI artifact: TBD
+
+## Caveats / notes
+- SmartScreen: MSI is unsigned (debug-style cert not used; no code signing in v1).
+  End users must click "More info → Run anyway". Documented for F-wave.
+- repo is private; CI status queried via fine-grained PAT (Actions: read-only).
