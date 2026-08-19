@@ -771,4 +771,132 @@ mod tests {
 
         *PRE_PUSH.lock().unwrap() = None;
     }
+
+    #[test]
+    fn two_device_distinct_edits_converge_byte_identical() {
+        let _guard = test_guard();
+        let tmp = tempdir().unwrap();
+        let (_remote_dir, url) = bare_remote(tmp.path());
+
+        // Device A creates the vault (e1) and syncs it to the shared remote.
+        let local_a = tmp.path().join("app_data_a");
+        ensure_clone(&url, &local_a, PAT).unwrap();
+        let v_a1 = Vault {
+            entries: vec![entry("e1", "dev-a")],
+        };
+        write_vault_file(VAULT_FILE, &encrypt_vault(&v_a1)).unwrap();
+        commit_vault_file(VAULT_FILE, "a: v1").unwrap();
+        let outcome = sync(PAT, &KEY, "dev-a").unwrap();
+        assert!(outcome.pushed);
+        assert!(!outcome.merged);
+
+        // Device B clones the populated remote (v1 checked out locally) and
+        // edits a DIFFERENT entry (adds e2), then syncs it up.
+        let local_b = tmp.path().join("app_data_b");
+        ensure_clone(&url, &local_b, PAT).unwrap();
+        let mut v_b = decrypt_vault(&checkout_vault_file(VAULT_FILE).unwrap());
+        assert_eq!(titles(&v_b), vec!["e1"]);
+        v_b.entries.push(entry("e2", "dev-b"));
+        write_vault_file(VAULT_FILE, &encrypt_vault(&v_b)).unwrap();
+        commit_vault_file(VAULT_FILE, "b: add e2").unwrap();
+        let outcome = sync(PAT, &KEY, "dev-b").unwrap();
+        assert!(outcome.pushed);
+
+        // Device A syncs: fast-forward pull to B's commit.
+        ensure_clone(&url, &local_a, PAT).unwrap();
+        let outcome = sync(PAT, &KEY, "dev-a").unwrap();
+        assert!(outcome.pulled);
+
+        // Both devices hold byte-identical vault.enc, decrypting to the same
+        // vault with the same key.
+        ensure_clone(&url, &local_a, PAT).unwrap();
+        let blob_a = checkout_vault_file(VAULT_FILE).unwrap();
+        ensure_clone(&url, &local_b, PAT).unwrap();
+        let blob_b = checkout_vault_file(VAULT_FILE).unwrap();
+        assert_eq!(
+            blob_a, blob_b,
+            "both devices must converge to byte-identical vault.enc"
+        );
+        let v_a_final = decrypt_vault(&blob_a);
+        let v_b_final = decrypt_vault(&blob_b);
+        assert_eq!(v_a_final, v_b_final);
+        assert_eq!(titles(&v_a_final), vec!["e1", "e2"]);
+    }
+
+    #[test]
+    fn two_device_same_entry_conflict_merges_and_converges() {
+        let _guard = test_guard();
+        let tmp = tempdir().unwrap();
+        let (_remote_dir, url) = bare_remote(tmp.path());
+
+        // Device A pushes e1 at v1.
+        let local_a = tmp.path().join("app_data_a");
+        ensure_clone(&url, &local_a, PAT).unwrap();
+        let e1 = entry("e1", "dev-a");
+        let v1 = Vault {
+            entries: vec![e1.clone()],
+        };
+        write_vault_file(VAULT_FILE, &encrypt_vault(&v1)).unwrap();
+        commit_vault_file(VAULT_FILE, "v1").unwrap();
+        sync(PAT, &KEY, "dev-a").unwrap();
+
+        // Device B clones the populated remote (e1 v1 checked out locally).
+        let local_b = tmp.path().join("app_data_b");
+        ensure_clone(&url, &local_b, PAT).unwrap();
+        assert_eq!(decrypt_vault(&checkout_vault_file(VAULT_FILE).unwrap()), v1);
+
+        // Device A edits e1 (bump to v2) and pushes.
+        ensure_clone(&url, &local_a, PAT).unwrap();
+        let mut v_a = decrypt_vault(&checkout_vault_file(VAULT_FILE).unwrap());
+        let e_a = v_a.entries.iter_mut().find(|e| e.title == "e1").unwrap();
+        e_a.bump();
+        write_vault_file(VAULT_FILE, &encrypt_vault(&v_a)).unwrap();
+        commit_vault_file(VAULT_FILE, "a: e1 v2").unwrap();
+        let outcome = sync(PAT, &KEY, "dev-a").unwrap();
+        assert!(outcome.pushed);
+
+        // Device B offline-edits the SAME entry to a HIGHER version (v3).
+        ensure_clone(&url, &local_b, PAT).unwrap();
+        let mut v_b = decrypt_vault(&checkout_vault_file(VAULT_FILE).unwrap());
+        let e_b = v_b.entries.iter_mut().find(|e| e.title == "e1").unwrap();
+        e_b.bump();
+        e_b.bump();
+        write_vault_file(VAULT_FILE, &encrypt_vault(&v_b)).unwrap();
+        commit_vault_file(VAULT_FILE, "b: e1 v3").unwrap();
+
+        // Device B syncs: divergence -> conflict merge with backup; the higher
+        // version (v3, B's edit) wins per the merge rule.
+        ensure_clone(&url, &local_b, PAT).unwrap();
+        let outcome = sync(PAT, &KEY, "dev-b").unwrap();
+        assert!(outcome.merged);
+        assert!(outcome.pushed);
+        let backup = outcome
+            .backup_created
+            .expect("conflict merge must create a backup");
+        assert!(backup.exists());
+        let merged_b = decrypt_vault(&checkout_vault_file(VAULT_FILE).unwrap());
+        let e1_b = merged_b.entries.iter().find(|e| e.title == "e1").unwrap();
+        assert_eq!(e1_b.version, 3);
+
+        // Device A syncs: converges to the same blob (fast-forward or merge).
+        ensure_clone(&url, &local_a, PAT).unwrap();
+        let outcome_a = sync(PAT, &KEY, "dev-a").unwrap();
+
+        // Both devices converge to byte-identical vault.enc decrypting with the
+        // same key; the merged entry is the higher version.
+        ensure_clone(&url, &local_a, PAT).unwrap();
+        let blob_a = checkout_vault_file(VAULT_FILE).unwrap();
+        ensure_clone(&url, &local_b, PAT).unwrap();
+        let blob_b = checkout_vault_file(VAULT_FILE).unwrap();
+        assert_eq!(
+            blob_a, blob_b,
+            "both devices must converge to byte-identical vault.enc after conflict merge"
+        );
+        let v_a_final = decrypt_vault(&blob_a);
+        let v_b_final = decrypt_vault(&blob_b);
+        assert_eq!(v_a_final, v_b_final);
+        let e1_final = v_a_final.entries.iter().find(|e| e.title == "e1").unwrap();
+        assert_eq!(e1_final.version, 3);
+        assert!(outcome_a.pulled || outcome_a.merged);
+    }
 }

@@ -1,0 +1,54 @@
+Task 17: Two-device convergence e2e test
+Date: 2026-08-18
+Status: DONE — verified
+
+## Deliverables
+Added two integration tests to crates/passm-sync/src/sync_engine.rs (tests module):
+
+1. `two_device_distinct_edits_converge_byte_identical`
+   - Shared file:// bare remote.
+   - Device A (app_data_a, device_id "dev-a") creates entry e1, syncs (pushed).
+   - Device B (app_data_b, device_id "dev-b") clones the populated remote
+     (v1 checked out locally by git2 clone), edits a DIFFERENT entry (adds
+     e2), syncs (pushed).
+   - Device A syncs again (fast-forward pull).
+   - Asserts: both devices' vault.enc is BYTE-IDENTICAL; both decrypt with the
+     same vault key to the same Vault; merged titles = [e1, e2].
+
+2. `two_device_same_entry_conflict_merges_and_converges`
+   - Shared file:// bare remote; device A pushes e1 at v1.
+   - Device B clones (e1 v1 locally).
+   - Device A edits e1 (bump -> v2), syncs (pushed).
+   - Device B offline-edits the SAME entry to a HIGHER version (bump x2 -> v3),
+     syncs -> CONFLICT MERGE.
+   - Asserts: outcome.merged && outcome.pushed; backup file created and exists;
+     merged entry version == 3 (higher version wins per merge rule); device A
+     syncs and both converge to byte-identical vault.enc; both decrypt with the
+     same key to the same vault; final entry version == 3.
+
+## Verification (all green)
+- `cargo test -p passm-sync two_device`: 2 passed, 0 failed (0.18s).
+- `cargo test --workspace`: 98 passed, 0 failed (30 passm-app + 6 passm-sync
+  [was 4, +2 new] + 17 passm-crypto + 31 passm-vault + 14 passm-cli).
+- `cargo clippy -p passm-sync --all-targets -- -D warnings`: clean.
+- `cargo fmt --check`: clean.
+
+## Design notes / merge rules exercised
+- merge is commutative + idempotent (per entry id): higher version wins;
+  equal version + one tombstone -> tombstone wins (no-resurrect); equal version
+  + both live -> lexicographically higher device_id wins.
+- Conflict path takes a crash-safe backup BEFORE merging (backups/vault.<ts>.enc)
+  and re-encrypts reusing the ORIGINAL header salt + params so the vault key
+  (derived from password + salt) stays valid.
+- Non-fast-forward races are bounded: sync retries at most MAX_ATTEMPTS (3)
+  times then returns SyncRetryExhausted (already covered by
+  sync_exhausts_retries_when_remote_keeps_advancing) — the new tests assert
+  convergence completes without hitting the bound.
+- The "no network / no sleeps" requirement holds: file:// transport, git2
+  plumbing only, deterministic commits.
+
+## Commands
+cargo test -p passm-sync two_device
+cargo test --workspace
+cargo clippy -p passm-sync --all-targets -- -D warnings
+cargo fmt --check
