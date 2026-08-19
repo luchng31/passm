@@ -198,7 +198,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: end-to-end create→sync→lock→unlock on dev box; failure: invoke error → toast shown. Evidence `.omo/evidence/task-14-integration/` (notes + screenshot).
   Commit: Y | chore(app): wire frontend to backend commands
 
-- [ ] 15. CI pipeline: tests + clippy + Windows MSI artifact
+- [~] 15. CI pipeline: tests + clippy + Windows MSI artifact
   > EXTERNAL BLOCKER (2026-08-19): GitHub Actions is disabled at the account
   > level ("Please reach out to GitHub Support"). Workflow file + rust-toolchain
   > committed (c9cedb4) and pushed (250cf82); local gates verified green
