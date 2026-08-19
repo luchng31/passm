@@ -190,7 +190,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: vitest search-filter cases pass; failure: XSS attempt in title → rendered escaped (React default) — assert in a component test. Evidence `.omo/evidence/task-13-frontend.txt`.
   Commit: Y | feat(ui): React vault UI with search, editor, copy
 
-- [ ] 14. Frontend-backend integration + dev smoke
+- [x] 14. Frontend-backend integration + dev smoke
   What to do / Must NOT do: Wire all screens to commands via typed invoke wrappers; handle error toasts (Chinese messages from backend); unlock → list → edit → lock flows; tray lock event locks UI; auto-lock locks UI. Run `tauri dev` on this Linux box with a local file:// remote or empty config, manual smoke: create entry, copy, sync_now, lock, unlock. Save smoke notes + screenshot(s) to evidence. Must NOT: no hardcoded API keys; no skipping the locked-state UI; no unwrap/panic; no .gitignore bypass (frontend dist ignored).
   Parallelization: Wave 3 | Blocked by: T12,T13 | Blocks: T15
   References: Tauri 2 IPC docs https://v2.tauri.app/develop/calling-frontend/.
@@ -206,7 +206,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: CI green end-to-end; failure: clippy warning → job fails → fix. Evidence `.omo/evidence/task-15-ci.txt` (workflow run link + artifact listing).
   Commit: Y | ci: test gates and Windows MSI pipeline
 
-- [ ] 16. Android APK: tauri android build + signing + manifest
+- [x] 16. Android APK: tauri android build + signing + manifest
   What to do / Must NOT do: `tauri android init` (gen/android), add INTERNET permission to AndroidManifest, wire keyring Kotlin `initializeNdkContext` call in MainActivity.onCreate (per T8), then `tauri android build --apk` → APK at `gen/android/app/build/outputs/apk/universal/release/*.apk` signed with debug keystore (Tauri default). Verify `apksigner verify`. Document "unknown source" install warning. Must NOT: no Play Store/keystore purchase v1; no obfuscation config beyond defaults; no committing gen/android build outputs (gitignore); no unwrap/panic.
   Parallelization: Wave 4 | Blocked by: T7,T11 | Blocks: F-wave
   References: Android verification tool_fff2adeec001rpPEnbIck8LVzf L591 (clipboard text-only note), L579/691 (keyring init); Tauri android docs https://v2.tauri.app/start/prerequisites/ and https://v2.tauri.app/distribute/ (APK); draft passm.md (APK via tauri android build, debug keystore).
@@ -214,7 +214,7 @@ Your next move: approve this plan. Full execution detail follows below.
   QA scenarios: happy: APK builds and verifies; failure: cross-compile error → consult T7 spike evidence/fallback decision. Evidence `.omo/evidence/task-16-apk.txt`.
   Commit: Y | build(android): APK with debug signing and keyring init
 
-- [ ] 17. Two-device convergence e2e test
+- [x] 17. Two-device convergence e2e test
   What to do / Must NOT do: Integration test in passm-sync simulating two devices: shared file:// bare remote; device A (app_data_a, device_id A) creates entries + sync_now; device B (app_data_b, device_id B) clones + edits different entries + sync_now; assert both converge to byte-identical vault.enc content (decrypt both). Conflict scenario: both edit the SAME entry offline (different versions) → sync → merged per rule, backup exists, both converge. Assert: no non-FF loop (bounded retries, test completes); final blob decrypts with same vault key on both. Must NOT: no network; no sleeps-based flakiness (use deterministic commits); no unwrap/panic.
   Parallelization: Wave 4 | Blocked by: T10,T12 | Blocks: F-wave
   References: draft passm.md convergence decision; Metis gap analysis (convergence proof blocker: merge(a,b)==merge(b,a) byte-identical; idempotence; no infinite non-FF loop).
