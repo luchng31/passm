@@ -11,9 +11,13 @@ use git2::{
     build::RepoBuilder, Cred, CredentialType, ErrorCode, FetchOptions, Oid, PushOptions,
     RemoteCallbacks, Repository, Signature,
 };
+use libgit2_sys::{git_libgit2_init, git_libgit2_opts, GIT_OPT_ADD_SSL_X509_CERT};
+use openssl_sys::{BIO_free_all, BIO_new_mem_buf, PEM_read_bio_X509, X509_free};
 use std::cell::RefCell;
 use std::fs;
+use std::os::raw::{c_int, c_void};
 use std::path::{Component, Path, PathBuf};
+use std::ptr::null_mut;
 use std::sync::Mutex;
 
 /// Dummy username accepted by GitHub when the PAT is supplied as the password.
@@ -24,6 +28,94 @@ const COMMIT_NAME: &str = "passm";
 const COMMIT_EMAIL: &str = "passm@local";
 const REMOTE_NAME: &str = "origin";
 const FETCH_REFSPEC: &str = "+refs/heads/*:refs/remotes/origin/*";
+
+/// Mozilla CA bundle shipped with the binary. Android has no system trust
+/// store, so libgit2's OpenSSL backend cannot verify GitHub's certificate
+/// (git2-rs #920). `ensure_cert_store` parses this in memory and injects each
+/// certificate into libgit2's global OpenSSL store — no file I/O, which is
+/// unreliable on Android (`BIO_new_file` fails with `ERR_R_BIO_LIB`).
+const CACERT_BYTES: &[u8] = include_bytes!("../assets/cacert.pem");
+
+/// Injects the embedded Mozilla CA bundle into libgit2's global OpenSSL
+/// certificate store, so HTTPS clone/fetch/push can verify GitHub on Android
+/// (which has no system trust store). The bundle is parsed in memory and each
+/// certificate is added via `GIT_OPT_ADD_SSL_X509_CERT` — no certificate file
+/// is ever written. The injection is re-run on every call: the store add is
+/// idempotent (duplicates are no-ops), matching the old rewrite-on-every-call
+/// behavior that healed stale state. Chain validation and the hostname SAN
+/// check remain fully enforced by libgit2/OpenSSL.
+pub fn ensure_cert_store() -> Result<(), SyncError> {
+    // SAFETY: `git_libgit2_init` is refcounted and thread-safe. It must run
+    // before the first `GIT_OPT_ADD_SSL_X509_CERT` call so libgit2's global
+    // SSL ctx (`git__ssl_ctx`, created by `git_openssl_stream_global_init`)
+    // exists. The `git2` crate also inits; the extra refcount is released on
+    // the final matching shutdown, so this is always sound.
+    unsafe {
+        git_libgit2_init();
+    }
+    // SAFETY: `CACERT_BYTES` is a `'static` slice; `as_ptr` is valid for
+    // `len` bytes and `BIO_new_mem_buf` copies the buffer into a new BIO, so
+    // no borrow of the slice outlives this call. A null return means the BIO
+    // could not be allocated and is handled before use.
+    let bio = unsafe {
+        BIO_new_mem_buf(
+            CACERT_BYTES.as_ptr().cast::<c_void>(),
+            CACERT_BYTES.len() as c_int,
+        )
+    };
+    if bio.is_null() {
+        return Err(SyncError::Git(git2::Error::from_str(
+            "failed to create memory BIO for CA bundle",
+        )));
+    }
+    let mut added = 0usize;
+    loop {
+        // SAFETY: `bio` is a live `BIO*` (null-checked above, freed only by
+        // `BIO_free_all` below). `PEM_read_bio_X509` advances the BIO and
+        // returns a null-owned `X509*` that must be released with
+        // `X509_free`; `null_mut()` for the out-param and `None` callback are
+        // valid per the OpenSSL API contract.
+        let cert = unsafe { PEM_read_bio_X509(bio, null_mut(), None, null_mut()) };
+        if cert.is_null() {
+            break;
+        }
+        // SAFETY: `cert` is a valid `X509*` returned by `PEM_read_bio_X509`
+        // above. `GIT_OPT_ADD_SSL_X509_CERT` adds it to libgit2's global SSL
+        // store, which up-refs the certificate (`X509_STORE_add_cert`), so
+        // the caller's reference remains ours to free afterwards. The variadic
+        // call expects the `X509*`; `*mut X509` is FFI-safe as a vararg.
+        let rc = unsafe { git_libgit2_opts(GIT_OPT_ADD_SSL_X509_CERT as c_int, cert) };
+        // SAFETY: we own the reference returned by `PEM_read_bio_X509`; the
+        // store up-ref'd the certificate, so `X509_free` releases exactly our
+        // reference (no use-after-free, no double-free).
+        unsafe {
+            X509_free(cert);
+        }
+        if rc < 0 {
+            // SAFETY: `bio` is the memory BIO created above; `BIO_free_all`
+            // releases it (and any chained BIOs) exactly once, after which no
+            // pointer into it is used again.
+            unsafe {
+                BIO_free_all(bio);
+            }
+            return Err(SyncError::Git(git2::Error::from_str(
+                "failed to add CA certificate to libgit2 SSL store",
+            )));
+        }
+        added += 1;
+    }
+    // SAFETY: releases the memory BIO created by `BIO_new_mem_buf` above; the
+    // parse loop has ended, so no further reads occur through `bio`.
+    unsafe {
+        BIO_free_all(bio);
+    }
+    if added == 0 {
+        return Err(SyncError::Git(git2::Error::from_str(
+            "no certificates parsed from embedded CA bundle",
+        )));
+    }
+    Ok(())
+}
 
 /// Local repository directory, set by `ensure_clone`. A `Mutex` (not
 /// `OnceLock`) so a re-clone can point it at a fresh directory.
@@ -102,6 +194,7 @@ fn safe_rel_path(relative_path: &str) -> Result<&Path, SyncError> {
 /// `remote_url` — the PAT is only ever passed through the credential callback,
 /// never stored in the URL.
 pub fn ensure_clone(remote_url: &str, local_dir: &Path, pat: &str) -> Result<(), SyncError> {
+    ensure_cert_store()?;
     if !local_dir.join(".git").exists() {
         if let Some(parent) = local_dir.parent() {
             fs::create_dir_all(parent).map_err(SyncError::Io)?;
@@ -134,6 +227,11 @@ pub fn ensure_clone(remote_url: &str, local_dir: &Path, pat: &str) -> Result<(),
 
 /// Fetches all refs from `origin`, updating the remote-tracking refs.
 pub fn fetch(pat: &str) -> Result<(), SyncError> {
+    // libgit2's SSL store is process-global and initialized once per process;
+    // re-inject the bundled CA bundle into it before any network op (Android
+    // has no system trust store). Injection is idempotent, so re-running on
+    // every call is safe.
+    ensure_cert_store()?;
     let repo = open_repo()?;
     let mut remote = repo.find_remote(REMOTE_NAME).map_err(SyncError::Git)?;
     let mut callbacks = RemoteCallbacks::new();
@@ -149,6 +247,11 @@ pub fn fetch(pat: &str) -> Result<(), SyncError> {
 /// Pushes the current branch to `origin`. A rejected non-fast-forward push
 /// surfaces as `SyncError::NonFastForward` (the T10 merge trigger).
 pub fn push(pat: &str) -> Result<(), SyncError> {
+    // libgit2's SSL store is process-global and initialized once per process;
+    // re-inject the bundled CA bundle into it before any network op (Android
+    // has no system trust store). Injection is idempotent, so re-running on
+    // every call is safe.
+    ensure_cert_store()?;
     let repo = open_repo()?;
     let head = repo.head().map_err(SyncError::Git)?;
     let branch = head
@@ -371,6 +474,24 @@ mod tests {
 
     fn branch_name(repo: &Repository) -> String {
         repo.head().unwrap().shorthand().unwrap().to_string()
+    }
+
+    #[test]
+    fn ensure_cert_store_loads_bundle_certs() {
+        let _guard = test_guard();
+        ensure_cert_store().unwrap();
+        // Second call must not fail: the store add is idempotent.
+        ensure_cert_store().unwrap();
+    }
+
+    #[test]
+    fn embedded_bundle_contains_121_certs() {
+        let marker = b"-----BEGIN CERTIFICATE-----";
+        let count = CACERT_BYTES
+            .windows(marker.len())
+            .filter(|window| *window == marker)
+            .count();
+        assert_eq!(count, 121);
     }
 
     fn advance_remote(

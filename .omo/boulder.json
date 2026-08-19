@@ -6,16 +6,17 @@
       "work_id": "passm-94437172",
       "active_plan": "/home/ubuntu/passm/.omo/plans/passm.md",
       "plan_name": "passm",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-08-14T07:35:49.042Z",
-      "updated_at": "2026-08-18T00:50:13.893Z",
+      "updated_at": "2026-08-19T01:11:41.417Z",
       "session_ids": [
         "opencode:ses_000f8aec6ffeAryYDI06LicscV",
         "opencode:ses_ff2bf182fffe4dbEySS17qwJJG",
         "opencode:ses_ff2beb56bffeaK4DfYTyyTnn6Y",
         "opencode:ses_ff29c5742ffez31dsj5vAQqAZV",
         "opencode:ses_fedbc7c67ffeJQJeR6LotC384o",
-        "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh"
+        "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh",
+        "opencode:ses_fecc11a93ffeoanpuJ0s6CU03i"
       ],
       "session_origins": {
         "opencode:ses_000f8aec6ffeAryYDI06LicscV": "direct",
@@ -23,7 +24,8 @@
         "opencode:ses_ff2beb56bffeaK4DfYTyyTnn6Y": "appended",
         "opencode:ses_ff29c5742ffez31dsj5vAQqAZV": "appended",
         "opencode:ses_fedbc7c67ffeJQJeR6LotC384o": "appended",
-        "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh": "appended"
+        "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh": "appended",
+        "opencode:ses_fecc11a93ffeoanpuJ0s6CU03i": "appended"
       },
       "agent": "atlas",
       "task_sessions": {
@@ -113,21 +115,35 @@
           "agent": "Sisyphus-Junior",
           "category": "visual-engineering",
           "updated_at": "2026-08-18T00:50:13.893Z"
+        },
+        "todo:14": {
+          "task_key": "todo:14",
+          "task_label": "14",
+          "task_title": "Frontend-backend integration + dev smoke",
+          "session_id": "opencode:ses_fecc11a93ffeoanpuJ0s6CU03i",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-08-18T06:29:18.133Z",
+          "ended_at": "2026-08-18T06:29:18.132Z",
+          "status": "completed"
         }
-      }
+      },
+      "ended_at": "2026-08-19T01:11:41.416Z",
+      "elapsed_ms": 408952374
     }
   },
   "active_plan": "/home/ubuntu/passm/.omo/plans/passm.md",
   "started_at": "2026-08-14T07:35:49.042Z",
-  "status": "active",
-  "updated_at": "2026-08-18T00:50:13.893Z",
+  "status": "completed",
+  "updated_at": "2026-08-19T01:11:41.417Z",
   "session_ids": [
     "opencode:ses_000f8aec6ffeAryYDI06LicscV",
     "opencode:ses_ff2bf182fffe4dbEySS17qwJJG",
     "opencode:ses_ff2beb56bffeaK4DfYTyyTnn6Y",
     "opencode:ses_ff29c5742ffez31dsj5vAQqAZV",
     "opencode:ses_fedbc7c67ffeJQJeR6LotC384o",
-    "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh"
+    "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh",
+    "opencode:ses_fecc11a93ffeoanpuJ0s6CU03i"
   ],
   "session_origins": {
     "opencode:ses_000f8aec6ffeAryYDI06LicscV": "direct",
@@ -135,7 +151,8 @@
     "opencode:ses_ff2beb56bffeaK4DfYTyyTnn6Y": "appended",
     "opencode:ses_ff29c5742ffez31dsj5vAQqAZV": "appended",
     "opencode:ses_fedbc7c67ffeJQJeR6LotC384o": "appended",
-    "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh": "appended"
+    "opencode:ses_feda710a7ffeJtO4Hcylo3fiqh": "appended",
+    "opencode:ses_fecc11a93ffeoanpuJ0s6CU03i": "appended"
   },
   "plan_name": "passm",
   "task_sessions": {
@@ -225,7 +242,20 @@
       "agent": "Sisyphus-Junior",
       "category": "visual-engineering",
       "updated_at": "2026-08-18T00:50:13.893Z"
+    },
+    "todo:14": {
+      "task_key": "todo:14",
+      "task_label": "14",
+      "task_title": "Frontend-backend integration + dev smoke",
+      "session_id": "opencode:ses_fecc11a93ffeoanpuJ0s6CU03i",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-08-18T06:29:18.133Z",
+      "ended_at": "2026-08-18T06:29:18.132Z",
+      "status": "completed"
     }
   },
-  "agent": "atlas"
+  "agent": "atlas",
+  "ended_at": "2026-08-19T01:11:41.416Z",
+  "elapsed_ms": 408952374
 }

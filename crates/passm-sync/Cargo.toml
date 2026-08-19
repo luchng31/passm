@@ -7,6 +7,11 @@ rust-version.workspace = true
 
 [dependencies]
 git2.workspace = true
+# Raw libgit2/OpenSSL FFI for in-memory CA-bundle injection
+# (GIT_OPT_ADD_SSL_X509_CERT); both are already in the dependency graph via
+# git2's vendored-libgit2/vendored-openssl, so this adds no new downloads.
+libgit2-sys = "0.18"
+openssl-sys = "0.9"
 serde.workspace = true
 uuid.workspace = true
 # keyring 4.1.x: windows-native-keyring-store for the Windows desktop build.
@@ -16,9 +21,16 @@ uuid.workspace = true
 # store backend that MainActivity.kt initializes via
 # io.crates.keyring.Keyring.initializeNdkContext (wired in T16).
 keyring = { workspace = true, features = ["windows-native-keyring-store", "android-native-keyring-store"] }
+# keyring-core is used directly on Android: keyring 4.x's `v1` facade has no
+# Android branch in `set_credential_store`, so we register the native store
+# with keyring-core and use `keyring_core::Entry` there.
+keyring-core = "1"
 passm-crypto = { path = "../passm-crypto" }
 passm-vault = { path = "../passm-vault" }
 serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = "1.0"
 
 [dev-dependencies]
 tempfile = "3"

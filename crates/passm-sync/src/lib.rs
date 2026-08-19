@@ -9,8 +9,9 @@ pub mod sync_engine;
 pub use device_id::{load, load_or_create};
 pub use error::SyncError;
 pub use git_repo::{
-    checkout_vault_file, commit_vault_file, current_branch, current_head, ensure_clone, fetch,
-    is_fast_forward, push, read_vault_from_ref, remote_head, repo_dir, write_vault_file,
+    checkout_vault_file, commit_vault_file, current_branch, current_head, ensure_cert_store,
+    ensure_clone, fetch, is_fast_forward, push, read_vault_from_ref, remote_head, repo_dir,
+    write_vault_file,
 };
 pub use pat_store::{KeyringPatStore, MockPatStore, PatStore};
 pub use sync_engine::{backup_vault, sync, SyncOutcome, VAULT_FILE};

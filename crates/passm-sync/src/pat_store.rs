@@ -17,19 +17,46 @@ pub trait PatStore: Send + Sync {
     fn delete(&self) -> Result<(), SyncError>;
 }
 
-/// PAT store backed by the platform keyring (keyring 4.1.x).
+/// PAT store backed by the platform keyring.
 ///
-/// Windows: `windows-native-keyring-store` (Credential Manager).
-/// Android: wired in T16 via the `android-native-keyring-store` feature plus
-/// `io.crates.keyring.Keyring.initializeNdkContext(context)` in
-/// MainActivity.onCreate (Tauri 2.11+ removed automatic ndk-context init).
+/// Desktop (Windows/macOS/Linux): the keyring 4.x `v1` facade
+/// (`keyring::Entry`), which registers the platform-native store in
+/// `set_credential_store`.
+///
+/// Android: keyring 4.x's `v1` facade has no Android branch and returns
+/// `NoDefaultStore`, so we register `android-native-keyring-store` directly
+/// with `keyring_core` and use `keyring_core::Entry`. The store requires the
+/// NDK context initialized via `io.crates.keyring.Keyring.initializeNdkContext`
+/// in MainActivity.onCreate (wired in T16).
+///
+/// Windows uses `windows-native-keyring-store` (Credential Manager).
 pub struct KeyringPatStore {
-    entry: keyring::Entry,
+    entry: KeyringEntry,
 }
+
+/// Entry type: the keyring 4.x `v1` facade is desktop-only (its
+/// `set_credential_store` has no Android branch and returns
+/// `NoDefaultStore`), so Android registers the native store with
+/// keyring-core directly and uses `keyring_core::Entry`.
+#[cfg(target_os = "android")]
+type KeyringEntry = keyring_core::Entry;
+#[cfg(not(target_os = "android"))]
+type KeyringEntry = keyring::Entry;
 
 impl KeyringPatStore {
     pub fn new() -> Result<Self, SyncError> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        #[cfg(target_os = "android")]
+        {
+            // SAFETY: `Store::new()` requires the NDK context initialized by
+            // `Keyring.initializeNdkContext` in MainActivity.onCreate; it is
+            // idempotent (vault lookup reuses an existing vault) so re-registering
+            // on every call is safe and heals stale state. `set_default_store`
+            // swaps an Arc in keyring-core's global RwLock.
+            let store = android_native_keyring_store::Store::new()
+                .map_err(|e| SyncError::KeyringError(e.to_string()))?;
+            keyring_core::set_default_store(store);
+        }
+        let entry = KeyringEntry::new(KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| SyncError::KeyringError(e.to_string()))?;
         Ok(Self { entry })
     }
@@ -39,7 +66,7 @@ impl PatStore for KeyringPatStore {
     fn get(&self) -> Result<Option<String>, SyncError> {
         match self.entry.get_password() {
             Ok(pat) => Ok(Some(pat)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
             Err(e) => Err(SyncError::KeyringError(e.to_string())),
         }
     }

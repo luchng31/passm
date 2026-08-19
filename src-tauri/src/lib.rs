@@ -142,8 +142,16 @@ pub fn run() -> tauri::Result<()> {
         .setup(|app| {
             // Resolve the app data dir once; repo/backups/device_id live under it.
             let data_dir = app.path().app_data_dir()?;
-            app.manage(AppPaths { data_dir });
+            app.manage(AppPaths {
+                data_dir: data_dir.clone(),
+            });
             app.manage(Mutex::new(SessionState::default()));
+            // Android has no system CA store; inject the bundled Mozilla
+            // bundle into libgit2's in-memory SSL store before any git
+            // network operation (T16 follow-up).
+            if let Err(e) = passm_sync::git_repo::ensure_cert_store() {
+                eprintln!("cert store init failed: {e}");
+            }
             #[cfg(desktop)]
             setup_tray(app)?;
             spawn_auto_lock_timer(app.handle().clone());
@@ -153,6 +161,8 @@ pub fn run() -> tauri::Result<()> {
             lock,
             get_session_status,
             commands::unlock,
+            commands::has_vault,
+            commands::create_vault,
             commands::list,
             commands::get,
             commands::create,

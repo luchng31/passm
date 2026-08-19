@@ -185,6 +185,31 @@ pub fn unlock_vault(password: &str, blob: &[u8]) -> Result<(Vault, [u8; 32]), Co
     Ok((vault, vault_key))
 }
 
+/// Pure: derive keys from a fresh random salt + default KDF params and encrypt
+/// an empty vault. Returns the PASSM1 blob and the vault key (the async
+/// wrapper unlocks the session with the key). First-use only — callers must
+/// check that `vault.enc` does not already exist.
+pub fn create_vault_blob(password: &str) -> Result<(Vec<u8>, [u8; 32]), CommandError> {
+    let mut salt = [0u8; 32];
+    OsRng.fill_bytes(&mut salt);
+    let params = passm_crypto::KdfParams::default();
+    let master = Zeroizing::new(passm_crypto::derive_master_key(
+        password.as_bytes(),
+        &salt,
+        &params,
+    )?);
+    let vault_key = passm_crypto::derive_vault_key(&master)
+        .map_err(|e| CommandError::Internal(format!("HKDF expand failed: {e}")))?;
+    let vault = Vault::empty();
+    let blob = envelope::encrypt(
+        &vault_key,
+        &params,
+        salt,
+        &vault.canonical_json().map_err(CommandError::Json)?,
+    )?;
+    Ok((blob, vault_key))
+}
+
 /// Adds a new entry (version 1) to the vault and returns it.
 pub fn create_entry(vault: &mut Vault, input: &EntryInput, device_id: &str) -> Entry {
     let entry = Entry::new(
@@ -438,6 +463,53 @@ pub(crate) async fn unlock(app: AppHandle, password: String) -> Result<(), Comma
     Ok(())
 }
 
+/// True when a vault blob already exists in the sync repo (first-use check).
+#[tauri::command]
+pub(crate) async fn has_vault(app: AppHandle) -> Result<bool, CommandError> {
+    let paths = app.state::<AppPaths>();
+    Ok(paths
+        .data_dir
+        .join("repo")
+        .join(passm_sync::VAULT_FILE)
+        .exists())
+}
+
+/// Create the vault on first use: fresh salt + default KDF params, encrypt an
+/// empty vault, write it into the repo, commit, unlock the session, and sync
+/// best-effort (offline-safe). Refuses to overwrite an existing vault.
+#[tauri::command]
+pub(crate) async fn create_vault(app: AppHandle, password: String) -> Result<(), CommandError> {
+    let password = Zeroizing::new(password);
+    let paths = app.state::<AppPaths>();
+    let blob_path = paths.data_dir.join("repo").join(passm_sync::VAULT_FILE);
+    if blob_path.exists() {
+        return Err(CommandError::InvalidInput("保险库已存在".into()));
+    }
+    let (blob, vault_key) = create_vault_blob(&password)?;
+    let repo_dir = paths.data_dir.join("repo");
+    fs::create_dir_all(&repo_dir)?;
+    fs::write(&blob_path, &blob)?;
+    let _ = passm_sync::commit_vault_file(passm_sync::VAULT_FILE, "create: initial vault");
+    let device_id =
+        passm_sync::device_id::load_or_create(&paths.data_dir).map_err(CommandError::Sync)?;
+    let state = app.state::<Mutex<SessionState>>();
+    {
+        let mut guard = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.device_id = device_id;
+        unlock_session(
+            &mut guard,
+            vault_key,
+            Vault::empty(),
+            SystemClock.now_unix(),
+        );
+    }
+    let _ = ensure_repo_ready(&paths.data_dir);
+    let _ = sync_now_inner(&app).await;
+    Ok(())
+}
+
 /// List live entries (sorted by id).
 #[tauri::command]
 pub(crate) async fn list(app: AppHandle) -> Result<Vec<Entry>, CommandError> {
@@ -594,6 +666,9 @@ pub(crate) async fn set_sync_config(
     let paths = app.state::<AppPaths>();
     let repo_dir = paths.data_dir.join("repo");
     let pat = Zeroizing::new(pat);
+    // Android has no system CA store; inject the bundled cert into libgit2's
+    // in-memory SSL store before any network operation (no file I/O).
+    passm_sync::ensure_cert_store()?;
     passm_sync::ensure_clone(&remote_url, &repo_dir, &pat)?;
     let pat_store = passm_sync::KeyringPatStore::new()?;
     pat_store.set(&pat)?;
@@ -921,6 +996,35 @@ mod tests {
     fn load_missing_sync_config_returns_none() {
         let dir = tempdir().unwrap();
         assert_eq!(load_sync_config(dir.path()).unwrap(), None);
+    }
+
+    // ---- first-use vault creation ----
+
+    #[test]
+    fn create_vault_blob_unlocks_with_same_password() {
+        let (blob, _key) = create_vault_blob("hunter2").unwrap();
+        assert!(blob.starts_with(b"PASSM1"));
+        let (vault, _key2) = unlock_vault("hunter2", &blob).unwrap();
+        assert!(vault.entries.is_empty());
+    }
+
+    #[test]
+    fn create_vault_blob_rejects_wrong_password() {
+        let (blob, _key) = create_vault_blob("right").unwrap();
+        assert!(matches!(
+            unlock_vault("wrong", &blob),
+            Err(CommandError::WrongPassword)
+        ));
+    }
+
+    #[test]
+    fn create_vault_blob_uses_fresh_salt_each_call() {
+        let (blob_a, _) = create_vault_blob("pw").unwrap();
+        let (blob_b, _) = create_vault_blob("pw").unwrap();
+        assert_ne!(
+            blob_a, blob_b,
+            "same password must still randomize salt+nonce"
+        );
     }
 
     // ---- Chinese error messages ----

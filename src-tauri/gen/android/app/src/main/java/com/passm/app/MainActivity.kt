@@ -6,8 +6,8 @@ import io.crates.keyring.Keyring
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
-    enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    enableEdgeToEdge()
     Keyring.initializeNdkContext(applicationContext)
   }
 }

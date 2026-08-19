@@ -3033,8 +3033,12 @@ dependencies = [
 name = "passm-sync"
 version = "0.1.0"
 dependencies = [
+ "android-native-keyring-store",
  "git2",
  "keyring",
+ "keyring-core",
+ "libgit2-sys",
+ "openssl-sys",
  "passm-crypto",
  "passm-vault",
  "serde",

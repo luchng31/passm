@@ -107,3 +107,11 @@ export function getSyncConfig(): Promise<SyncConfig | null> {
 export function setSyncConfig(remoteUrl: string, pat: string): Promise<void> {
   return invoke('set_sync_config', { remoteUrl, pat });
 }
+
+export function hasVault(): Promise<boolean> {
+  return invoke('has_vault');
+}
+
+export function createVault(password: string): Promise<void> {
+  return invoke('create_vault', { password });
+}
