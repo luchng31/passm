@@ -169,8 +169,9 @@ fn conflict_merge(
         vault_key,
         &header.params,
         header.salt,
-        &merged.canonical_json(),
-    );
+        &merged.canonical_json().map_err(SyncError::Json)?,
+    )
+    .map_err(SyncError::Envelope)?;
 
     // 6. Write + commit (two-parent merge; see git_repo::commit_vault_merge).
     git_repo::write_vault_file(VAULT_FILE, &merged_blob)?;
@@ -341,7 +342,13 @@ mod tests {
     }
 
     fn encrypt_vault(vault: &Vault) -> Vec<u8> {
-        envelope::encrypt(&KEY, &KdfParams::default(), SALT, &vault.canonical_json())
+        envelope::encrypt(
+            &KEY,
+            &KdfParams::default(),
+            SALT,
+            &vault.canonical_json().unwrap(),
+        )
+        .unwrap()
     }
 
     fn decrypt_vault(blob: &[u8]) -> Vault {
@@ -478,8 +485,8 @@ mod tests {
         assert!(!outcome.merged);
         assert!(outcome.backup_created.is_none());
         assert_eq!(
-            remote_vault(&remote_dir).canonical_json(),
-            v2.canonical_json()
+            remote_vault(&remote_dir).canonical_json().unwrap(),
+            v2.canonical_json().unwrap()
         );
     }
 
@@ -521,8 +528,8 @@ mod tests {
 
         let local_blob = checkout_vault_file(VAULT_FILE).unwrap();
         assert_eq!(
-            decrypt_vault(&local_blob).canonical_json(),
-            v2.canonical_json()
+            decrypt_vault(&local_blob).canonical_json().unwrap(),
+            v2.canonical_json().unwrap()
         );
     }
 
@@ -585,7 +592,10 @@ mod tests {
         let outcome_a = sync(PAT, &KEY, "dev-a").unwrap();
         assert!(outcome_a.pulled || outcome_a.merged);
         let merged_a = decrypt_vault(&checkout_vault_file(VAULT_FILE).unwrap());
-        assert_eq!(merged_a.canonical_json(), merged.canonical_json());
+        assert_eq!(
+            merged_a.canonical_json().unwrap(),
+            merged.canonical_json().unwrap()
+        );
     }
 
     #[test]

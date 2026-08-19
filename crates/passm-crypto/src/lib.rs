@@ -58,15 +58,15 @@ pub fn derive_master_key(
 
 /// Derives the 32-byte vault key from the master key via HKDF-SHA256.
 ///
-/// # Panics
-/// Never in practice: HKDF-SHA256 expand with L=32 cannot fail (max output is 255*32 bytes).
-pub fn derive_vault_key(master: &[u8; 32]) -> [u8; 32] {
+/// # Errors
+/// Returns [`hkdf::InvalidLength`] if HKDF-SHA256 expand fails; with the fixed
+/// output length L=32 this is impossible (max output is 255*32 bytes), so
+/// callers typically treat it as an internal error.
+pub fn derive_vault_key(master: &[u8; 32]) -> Result<[u8; 32], hkdf::InvalidLength> {
     let hk = Hkdf::<Sha256>::new(None, master);
     let mut vault_key = [0u8; 32];
-    match hk.expand(b"passm-v1-vault-key", &mut vault_key) {
-        Ok(()) => vault_key,
-        Err(_) => unreachable!("HKDF-SHA256 expand with L=32 cannot fail"),
-    }
+    hk.expand(b"passm-v1-vault-key", &mut vault_key)?;
+    Ok(vault_key)
 }
 
 #[cfg(test)]
@@ -106,7 +106,7 @@ mod tests {
         let params = KdfParams::default();
         let master = derive_master_key(PASSWORD, &SALT, &params).unwrap();
         assert_eq!(master, GOLDEN_MASTER_KEY);
-        let vault = derive_vault_key(&master);
+        let vault = derive_vault_key(&master).unwrap();
         assert_eq!(vault, GOLDEN_VAULT_KEY);
     }
 
@@ -117,7 +117,7 @@ mod tests {
         let hk = Hkdf::<Sha256>::new(None, &master);
         let mut expected = [0u8; 32];
         hk.expand(b"passm-v1-vault-key", &mut expected).unwrap();
-        assert_eq!(derive_vault_key(&master), expected);
+        assert_eq!(derive_vault_key(&master).unwrap(), expected);
     }
 
     #[test]

@@ -74,11 +74,16 @@ impl Vault {
     }
 
     /// Canonical JSON: entries sorted by id for byte-stable output.
-    pub fn canonical_json(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    /// Returns a [`serde_json::Error`] if serialization fails; with the plain
+    /// `Serialize` derive this is impossible, so callers can treat it as an
+    /// internal error.
+    pub fn canonical_json(&self) -> Result<Vec<u8>, serde_json::Error> {
         let mut sorted = self.entries.clone();
         sorted.sort_by_key(|e| e.id);
         let vault = Vault { entries: sorted };
-        serde_json::to_vec(&vault).expect("Vault serialization is infallible")
+        serde_json::to_vec(&vault)
     }
 }
 
@@ -193,7 +198,10 @@ mod tests {
         let vault_cba = Vault {
             entries: vec![entry_with_id(c), entry_with_id(b), entry_with_id(a)],
         };
-        assert_eq!(vault_abc.canonical_json(), vault_cba.canonical_json());
+        assert_eq!(
+            vault_abc.canonical_json().unwrap(),
+            vault_cba.canonical_json().unwrap()
+        );
     }
 
     #[test]
@@ -204,7 +212,7 @@ mod tests {
         let vault = Vault {
             entries: vec![entry_with_id(c), entry_with_id(a), entry_with_id(b)],
         };
-        let bytes = vault.canonical_json();
+        let bytes = vault.canonical_json().unwrap();
         let parsed: Vault = serde_json::from_slice(&bytes).unwrap();
         let mut sorted = vec![a, b, c];
         sorted.sort();
@@ -248,7 +256,7 @@ mod tests {
     #[test]
     fn empty_vault_serializes_to_empty_entries() {
         let vault = Vault::empty();
-        assert_eq!(vault.canonical_json(), br#"{"entries":[]}"#);
+        assert_eq!(vault.canonical_json().unwrap(), br#"{"entries":[]}"#);
     }
 
     fn entry_with_fields(id: Uuid, version: u64, device_id: &str, deleted: bool) -> Entry {
@@ -389,9 +397,15 @@ mod tests {
             let remote = random_vault(&mut rng, &id_pool);
             let ab = merge(&local, &remote);
             let ba = merge(&remote, &local);
-            assert_eq!(ab.canonical_json(), ba.canonical_json());
-            assert_eq!(merge(&ab, &remote).canonical_json(), ab.canonical_json());
-            assert_eq!(merge(&ab, &local).canonical_json(), ab.canonical_json());
+            assert_eq!(ab.canonical_json().unwrap(), ba.canonical_json().unwrap());
+            assert_eq!(
+                merge(&ab, &remote).canonical_json().unwrap(),
+                ab.canonical_json().unwrap()
+            );
+            assert_eq!(
+                merge(&ab, &local).canonical_json().unwrap(),
+                ab.canonical_json().unwrap()
+            );
         }
     }
 }

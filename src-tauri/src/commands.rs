@@ -175,7 +175,8 @@ pub fn unlock_vault(password: &str, blob: &[u8]) -> Result<(Vault, [u8; 32]), Co
         &header.salt,
         &header.params,
     )?);
-    let vault_key = passm_crypto::derive_vault_key(&master);
+    let vault_key = passm_crypto::derive_vault_key(&master)
+        .map_err(|e| CommandError::Internal(format!("HKDF expand failed: {e}")))?;
     let plaintext = envelope::decrypt(&vault_key, blob).map_err(|e| match e {
         envelope::EnvelopeError::AuthenticationFailed => CommandError::WrongPassword,
         other => CommandError::Envelope(other),
@@ -310,12 +311,13 @@ pub fn reencrypt_vault(
     vault: &Vault,
 ) -> Result<Vec<u8>, CommandError> {
     let header = envelope::parse_header(current_blob)?;
-    Ok(envelope::encrypt(
+    envelope::encrypt(
         vault_key,
         &header.params,
         header.salt,
-        &vault.canonical_json(),
-    ))
+        &vault.canonical_json().map_err(CommandError::Json)?,
+    )
+    .map_err(CommandError::Envelope)
 }
 
 /// Reads the persisted sync config, if any.
@@ -352,7 +354,7 @@ fn ensure_repo_ready(data_dir: &Path) -> Result<(), CommandError> {
         return Err(CommandError::SyncNotConfigured);
     }
     let pat_store = passm_sync::KeyringPatStore::new()?;
-    let pat = pat_store.get()?.unwrap_or_default();
+    let pat = Zeroizing::new(pat_store.get()?.unwrap_or_default());
     passm_sync::ensure_clone(&config.remote_url, &repo_dir, &pat)?;
     Ok(())
 }
@@ -800,8 +802,8 @@ mod tests {
         };
         let salt = [0x42; 32];
         let master = passm_crypto::derive_master_key(password.as_bytes(), &salt, &params).unwrap();
-        let key = passm_crypto::derive_vault_key(&master);
-        envelope::encrypt(&key, &params, salt, &vault.canonical_json())
+        let key = passm_crypto::derive_vault_key(&master).unwrap();
+        envelope::encrypt(&key, &params, salt, &vault.canonical_json().unwrap()).unwrap()
     }
 
     #[test]
@@ -816,7 +818,10 @@ mod tests {
         )]);
         let blob = fixture_blob("correct password", &vault);
         let (decrypted, key) = unlock_vault("correct password", &blob).unwrap();
-        assert_eq!(decrypted.canonical_json(), vault.canonical_json());
+        assert_eq!(
+            decrypted.canonical_json().unwrap(),
+            vault.canonical_json().unwrap()
+        );
         assert_eq!(key.len(), 32);
     }
 
@@ -852,14 +857,15 @@ mod tests {
             "".into(),
             "dev-1".into(),
         )]);
-        let blob = envelope::encrypt(&key, &params, salt, &vault.canonical_json());
+        let blob =
+            envelope::encrypt(&key, &params, salt, &vault.canonical_json().unwrap()).unwrap();
         let new_blob = reencrypt_vault(&key, &blob, &vault).unwrap();
         let header = envelope::parse_header(&new_blob).unwrap();
         assert_eq!(header.params, params);
         assert_eq!(header.salt, salt);
         assert_eq!(
             envelope::decrypt(&key, &new_blob).unwrap(),
-            vault.canonical_json()
+            vault.canonical_json().unwrap()
         );
     }
 
@@ -873,12 +879,16 @@ mod tests {
         };
         let salt = [0x42; 32];
         let mut vault = Vault::empty();
-        let blob = envelope::encrypt(&key, &params, salt, &vault.canonical_json());
+        let blob =
+            envelope::encrypt(&key, &params, salt, &vault.canonical_json().unwrap()).unwrap();
         create_entry(&mut vault, &input("GitHub", "alice"), "dev-1");
         let new_blob = reencrypt_vault(&key, &blob, &vault).unwrap();
         let plaintext = envelope::decrypt(&key, &new_blob).unwrap();
         let decrypted: Vault = serde_json::from_slice(&plaintext).unwrap();
-        assert_eq!(decrypted.canonical_json(), vault.canonical_json());
+        assert_eq!(
+            decrypted.canonical_json().unwrap(),
+            vault.canonical_json().unwrap()
+        );
         assert_eq!(list_entries(&decrypted).len(), 1);
     }
 

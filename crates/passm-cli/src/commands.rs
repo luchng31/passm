@@ -26,7 +26,8 @@ pub fn derive(flags: &HashMap<String, String>) -> Result<(), CliError> {
     let salt = parse_hex_salt(get_flag(flags, "--salt")?)?;
     let params = KdfParams::default();
     let master = derive_master_key(password.as_bytes(), &salt, &params)?;
-    let vault_key = derive_vault_key(&master);
+    let vault_key = derive_vault_key(&master)
+        .map_err(|e| CliError::Internal(format!("HKDF expand failed: {e}")))?;
     println!("master_key={}", hex(&master));
     println!("vault_key={}", hex(&vault_key));
     Ok(())
@@ -44,8 +45,10 @@ pub fn encrypt(flags: &HashMap<String, String>) -> Result<(), CliError> {
     let salt = random_salt();
     let params = KdfParams::default();
     let master = derive_master_key(password.as_bytes(), &salt, &params)?;
-    let vault_key = derive_vault_key(&master);
-    let blob = envelope::encrypt(&vault_key, &params, salt, &plaintext);
+    let vault_key = derive_vault_key(&master)
+        .map_err(|e| CliError::Internal(format!("HKDF expand failed: {e}")))?;
+    let blob =
+        envelope::encrypt(&vault_key, &params, salt, &plaintext).map_err(CliError::Envelope)?;
     fs::write(out_path, blob)?;
     Ok(())
 }
@@ -91,8 +94,11 @@ pub fn vault_add(flags: &HashMap<String, String>) -> Result<(), CliError> {
         notes.to_string(),
         DEVICE_ID.to_string(),
     ));
-    let new_plaintext = vault.canonical_json();
-    let new_blob = envelope::encrypt(&vault_key, &header.params, header.salt, &new_plaintext);
+    let new_plaintext = vault
+        .canonical_json()
+        .map_err(|e| CliError::Internal(format!("vault serialization failed: {e}")))?;
+    let new_blob = envelope::encrypt(&vault_key, &header.params, header.salt, &new_plaintext)
+        .map_err(CliError::Envelope)?;
     fs::write(vault_path, new_blob)?;
     Ok(())
 }
@@ -126,7 +132,8 @@ fn unlock(
 ) -> Result<(envelope::EnvelopeHeader, [u8; 32], Vec<u8>), CliError> {
     let header = envelope::parse_header(blob)?;
     let master = derive_master_key(password.as_bytes(), &header.salt, &header.params)?;
-    let vault_key = derive_vault_key(&master);
+    let vault_key = derive_vault_key(&master)
+        .map_err(|e| CliError::Internal(format!("HKDF expand failed: {e}")))?;
     let plaintext = envelope::decrypt(&vault_key, blob)?;
     Ok((header, vault_key, plaintext))
 }

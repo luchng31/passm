@@ -42,6 +42,8 @@ pub enum EnvelopeError {
     UnsupportedVersion(u8),
     /// AEAD authentication failed (wrong key, tampered data, or wrong AAD).
     AuthenticationFailed,
+    /// AEAD encryption failed (impossible for in-memory payloads).
+    EncryptFailed,
 }
 
 impl fmt::Display for EnvelopeError {
@@ -56,6 +58,7 @@ impl fmt::Display for EnvelopeError {
                 f,
                 "PASSM1 authentication failed (wrong key or tampered data)"
             ),
+            Self::EncryptFailed => write!(f, "PASSM1 encryption failed"),
         }
     }
 }
@@ -108,16 +111,16 @@ pub fn parse_header(blob: &[u8]) -> Result<EnvelopeHeader> {
 /// header (magic, version, KDF params, salt, and a fresh 24-byte nonce from
 /// `OsRng`) is bound as AAD to XChaCha20-Poly1305.
 ///
-/// # Panics
-/// Never in practice: XChaCha20-Poly1305 encryption only fails for messages
-/// of 256 GiB or more, or AAD lengths that do not fit in `u64`; both are
-/// impossible for in-memory payloads.
+/// # Errors
+/// Returns [`EnvelopeError::EncryptFailed`] if the AEAD rejects the payload;
+/// only possible for messages of 256 GiB or more, or AAD lengths that do not
+/// fit in `u64`, so callers can treat it as an internal error.
 pub fn encrypt(
     vault_key: &[u8; 32],
     params: &KdfParams,
     salt: [u8; 32],
     plaintext: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
     let mut header = Vec::with_capacity(HEADER_LEN);
     header.extend_from_slice(MAGIC);
     header.push(VERSION);
@@ -135,12 +138,11 @@ pub fn encrypt(
         msg: plaintext,
         aad: &header,
     };
-    let ciphertext = match cipher.encrypt(&XNonce::from(nonce), payload) {
-        Ok(ct) => ct,
-        Err(_) => unreachable!("XChaCha20-Poly1305 encrypt cannot fail for in-memory payloads"),
-    };
+    let ciphertext = cipher
+        .encrypt(&XNonce::from(nonce), payload)
+        .map_err(|_| EnvelopeError::EncryptFailed)?;
     header.extend_from_slice(&ciphertext);
-    header
+    Ok(header)
 }
 
 /// Decrypts a PASSM1 envelope, reading the KDF params, salt, and nonce from
@@ -185,13 +187,13 @@ mod tests {
 
     #[test]
     fn roundtrip_returns_original_plaintext() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         assert_eq!(decrypt(&KEY, &blob).unwrap(), PLAINTEXT);
     }
 
     #[test]
     fn wrong_key_fails_tag_verification() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         assert_eq!(
             decrypt(&WRONG_KEY, &blob),
             Err(EnvelopeError::AuthenticationFailed)
@@ -200,7 +202,7 @@ mod tests {
 
     #[test]
     fn tampering_any_header_byte_is_rejected() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         for i in 0..HEADER_LEN {
             let mut tampered = blob.clone();
             tampered[i] ^= 0x01;
@@ -220,7 +222,7 @@ mod tests {
 
     #[test]
     fn tampering_ciphertext_fails_tag_verification() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         let indices = [HEADER_LEN, HEADER_LEN + PLAINTEXT.len() / 2, blob.len() - 1];
         for i in indices {
             let mut tampered = blob.clone();
@@ -235,7 +237,7 @@ mod tests {
 
     #[test]
     fn unsupported_version_is_rejected() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         for version in [0x00, 0x02, 0xff] {
             let mut forged = blob.clone();
             forged[6] = version;
@@ -249,7 +251,7 @@ mod tests {
 
     #[test]
     fn bad_magic_is_rejected() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         let mut forged = blob.clone();
         forged[0] = b'X';
         assert_eq!(decrypt(&KEY, &forged), Err(EnvelopeError::BadMagic));
@@ -257,8 +259,8 @@ mod tests {
 
     #[test]
     fn two_encrypts_with_same_inputs_produce_different_ciphertext() {
-        let a = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
-        let b = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let a = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
+        let b = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         assert_ne!(a, b, "fresh nonce must produce distinct ciphertexts");
         assert_eq!(decrypt(&KEY, &a).unwrap(), PLAINTEXT);
         assert_eq!(decrypt(&KEY, &b).unwrap(), PLAINTEXT);
@@ -266,14 +268,14 @@ mod tests {
 
     #[test]
     fn empty_plaintext_roundtrips() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, b"");
+        let blob = encrypt(&KEY, &PARAMS, SALT, b"").unwrap();
         assert_eq!(blob.len(), HEADER_LEN + TAG_LEN);
         assert_eq!(decrypt(&KEY, &blob).unwrap(), b"");
     }
 
     #[test]
     fn blob_shorter_than_header_is_rejected() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         for len in 0..HEADER_LEN {
             assert_eq!(
                 decrypt(&KEY, &blob[..len]),
@@ -285,7 +287,7 @@ mod tests {
 
     #[test]
     fn header_roundtrips_params_and_salt() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT);
+        let blob = encrypt(&KEY, &PARAMS, SALT, PLAINTEXT).unwrap();
         let hdr = parse_header(&blob).unwrap();
         assert_eq!(hdr.params, PARAMS);
         assert_eq!(hdr.salt, SALT);
@@ -293,7 +295,7 @@ mod tests {
 
     #[test]
     fn header_layout_is_byte_exact() {
-        let blob = encrypt(&KEY, &PARAMS, SALT, b"");
+        let blob = encrypt(&KEY, &PARAMS, SALT, b"").unwrap();
         assert_eq!(&blob[0..6], b"PASSM1");
         assert_eq!(blob[6], VERSION);
         assert_eq!(

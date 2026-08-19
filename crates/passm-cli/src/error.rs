@@ -16,6 +16,8 @@ pub enum CliError {
     Argon2(argon2::Error),
     /// PASSM1 envelope parse/decrypt failure (wrong password, tampered blob).
     Envelope(passm_crypto::envelope::EnvelopeError),
+    /// Internal invariant failure (HKDF expand, vault serialization).
+    Internal(String),
 }
 
 impl fmt::Display for CliError {
@@ -26,6 +28,7 @@ impl fmt::Display for CliError {
             Self::Json(err) => write!(f, "invalid vault JSON: {err}"),
             Self::Argon2(err) => write!(f, "key derivation failed: {err}"),
             Self::Envelope(err) => write!(f, "envelope error: {err}"),
+            Self::Internal(msg) => write!(f, "internal error: {msg}"),
         }
     }
 }

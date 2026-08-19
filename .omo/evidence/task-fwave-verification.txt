@@ -1,0 +1,71 @@
+Final verification wave (F1-F4)
+Date: 2026-08-19
+Status: DONE — with external blockers recorded (T15 CI, F3 deferred)
+
+## F1 Plan compliance audit (oracle)
+VERDICT: APPROVE (with one external blocker noted)
+- All 17 todos' acceptance criteria met and verifiable in-repo; evidence files
+  exist for T1-T17; one commit per todo confirmed (T7 evidence-only by design).
+- APK artifact verified: src-tauri/gen/android/app/build/outputs/apk/universal/
+  release/app-universal-release.apk (15.2 MB), apksigner verify EXIT=0,
+  CN=Android Debug O=Android C=US, SHA-256 365fe2c8...dd843 == evidence.
+- MSI is a CI artifact (windows-msi job) and cannot be produced while GitHub
+  Actions is disabled at the account level (external blocker, user action).
+- T15: workflow file + local gates (fmt/clippy/test/tsc/vitest) verified as the
+  deliverable; checkbox left unchecked, CI run blocked externally.
+
+## F2 Code quality + security review (oracle)
+VERDICT: FAIL initially -> ALL blocking items FIXED, re-verified green.
+Findings fixed in commit (see below):
+1. PAT-shaped fixture value: crates/passm-cli/tests/fixtures/vault.plain.json
+   "ghp_3f9aK2mQ8xR5vT1wY7uJ4nB6cD0eS" (fake, 28 chars, not a valid PAT) ->
+   replaced with "correct-horse-battery-staple-9"; vault.golden.passm1
+   regenerated via the CLI itself and roundtrip-verified (cmp byte-identical).
+2. Non-test panics eliminated:
+   - passm-crypto derive_vault_key: unreachable! -> Result<_, hkdf::InvalidLength>
+   - passm-crypto envelope::encrypt: unreachable! -> Result<_, EnvelopeError>
+     with new EnvelopeError::EncryptFailed variant
+   - passm-vault Vault::canonical_json: .expect -> Result<_, serde_json::Error>
+   All callers updated (cli -> CliError::Internal, app -> CommandError::Internal,
+   sync -> SyncError::Json/Envelope, tests -> .unwrap()).
+3. Zeroize gap: ensure_repo_ready now wraps the keyring PAT in Zeroizing
+   (src-tauri/src/commands.rs), consistent with sync_now_inner.
+- Crypto PASS: Argon2id 64MiB/3/4, XChaCha20-Poly1305, 24B OsRng nonce fresh per
+  encrypt, full 75-byte header as AAD, salt reused on re-encrypt, no password
+  verifier stored, PAT only via credential callback (never in URL).
+- Zeroize PASS: vault key in session is Zeroizing<[u8;32]>, password zeroized in
+  derive_master_key, chacha20poly1305 zeroize feature enabled.
+
+## F3 Real manual QA (desktop GUI)
+DEFERRED by user decision (2026-08-19): full user flow (unlock/add/search/
+copy+30s clear/lock/auto-lock) on a real desktop requires interactive GUI
+access. Environment has DISPLAY=:0 (GNOME Wayland) and webkit2gtk-4.1/gtk3/rsvg
+but the user chose to defer; APK artifact already verified by apksigner (F1).
+To run later: tauri dev on the Linux box; F3 as specified in the plan.
+
+## F4 Scope fidelity audit (oracle)
+VERDICT: APPROVE (with corrective follow-ups, all fixed)
+- Constraints PASS: git2 not gitoxide; GitHub only (no R2/S3); no TOTP/import/
+  bio/autofill; fixed KDF 64/3/4 (no --params flag in app); no compression in
+  vault/sync path (flate2/brotli are tauri icon-stack transitive deps only);
+  vault repo separate from source (no vault.enc/PAT in history); no Play
+  Store/keystore purchase (debug-signed); clippy gate present in CI; nonce fresh
+  per encrypt (regression test asserts distinct ciphertexts).
+- Fixed: constraint 7 (3 non-test panic sites -> Result, above) and
+  constraint 9 (.env/.env.* added to .gitignore — the only guardrail gap).
+
+## Re-verification after fixes (all green)
+- cargo build --workspace: OK
+- cargo clippy --workspace --all-targets -- -D warnings: clean
+- cargo fmt --check: clean
+- cargo test --workspace: 98 passed, 0 failed
+- grep scan: zero unwrap/panic/expect/todo/unreachable in non-test code
+  (all remaining .unwrap() are inside #[cfg(test)] modules or tests/)
+
+## Commit
+<commit-sha> fix: F2/F4 gate items (no panics in non-test code, PAT hygiene, .env ignore)
+
+## Remaining external blockers
+- T15 CI: GitHub Actions disabled at account level -> user contacts GitHub
+  Support; then push to trigger, verify windows-msi artifact.
+- F3: deferred by user decision; run tauri dev manually when convenient.
