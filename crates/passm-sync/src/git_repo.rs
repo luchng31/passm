@@ -11,7 +11,10 @@ use git2::{
     build::RepoBuilder, Cred, CredentialType, ErrorCode, FetchOptions, Oid, PushOptions,
     RemoteCallbacks, Repository, Signature,
 };
-use libgit2_sys::{git_libgit2_init, git_libgit2_opts, GIT_OPT_ADD_SSL_X509_CERT};
+use libgit2_sys::{
+    git_libgit2_init, git_libgit2_opts, GIT_OPT_ADD_SSL_X509_CERT, GIT_OPT_SET_SERVER_CONNECT_TIMEOUT,
+    GIT_OPT_SET_SERVER_TIMEOUT,
+};
 use openssl_sys::{BIO_free_all, BIO_new_mem_buf, PEM_read_bio_X509, X509_free};
 use std::cell::RefCell;
 use std::fs;
@@ -36,14 +39,25 @@ const FETCH_REFSPEC: &str = "+refs/heads/*:refs/remotes/origin/*";
 /// unreliable on Android (`BIO_new_file` fails with `ERR_R_BIO_LIB`).
 const CACERT_BYTES: &[u8] = include_bytes!("../assets/cacert.pem");
 
+/// Connect timeout (ms) for git network ops. libgit2 has no default (relies on
+/// the OS TCP timeout, typically ~75s and not always enforced), so a silent
+/// network failure on Android would hang clone/fetch/push forever — the UI
+/// spinner never ends. 15s bounds the handshake.
+const CONNECT_TIMEOUT_MS: c_int = 15_000;
+/// Per-read/write server timeout (ms); bounds a stalled transfer after the
+/// handshake (e.g. half-open TLS). 60s is generous for a small vault repo.
+const SERVER_TIMEOUT_MS: c_int = 60_000;
+
 /// Injects the embedded Mozilla CA bundle into libgit2's global OpenSSL
 /// certificate store, so HTTPS clone/fetch/push can verify GitHub on Android
 /// (which has no system trust store). The bundle is parsed in memory and each
 /// certificate is added via `GIT_OPT_ADD_SSL_X509_CERT` — no certificate file
-/// is ever written. The injection is re-run on every call: the store add is
-/// idempotent (duplicates are no-ops), matching the old rewrite-on-every-call
-/// behavior that healed stale state. Chain validation and the hostname SAN
-/// check remain fully enforced by libgit2/OpenSSL.
+/// is ever written. Also sets libgit2's global connect + server timeouts so a
+/// silent network failure cannot hang a git op forever. The injection is
+/// re-run on every call: the store add is idempotent (duplicates are no-ops),
+/// matching the old rewrite-on-every-call behavior that healed stale state.
+/// Chain validation and the hostname SAN check remain fully enforced by
+/// libgit2/OpenSSL.
 pub fn ensure_cert_store() -> Result<(), SyncError> {
     // SAFETY: `git_libgit2_init` is refcounted and thread-safe. It must run
     // before the first `GIT_OPT_ADD_SSL_X509_CERT` call so libgit2's global
@@ -52,6 +66,15 @@ pub fn ensure_cert_store() -> Result<(), SyncError> {
     // the final matching shutdown, so this is always sound.
     unsafe {
         git_libgit2_init();
+    }
+    // SAFETY: `git_libgit2_opts` is a variadic FFI call; both timeout options
+    // take a single `c_int` in milliseconds, which is the natural vararg
+    // promotion of our typed constants. Setting a global option is idempotent
+    // (re-set to the same value on every call), and the values are only ever
+    // read by libgit2's own transport layer while a connection is active.
+    unsafe {
+        git_libgit2_opts(GIT_OPT_SET_SERVER_CONNECT_TIMEOUT as c_int, CONNECT_TIMEOUT_MS);
+        git_libgit2_opts(GIT_OPT_SET_SERVER_TIMEOUT as c_int, SERVER_TIMEOUT_MS);
     }
     // SAFETY: `CACERT_BYTES` is a `'static` slice; `as_ptr` is valid for
     // `len` bytes and `BIO_new_mem_buf` copies the buffer into a new BIO, so
