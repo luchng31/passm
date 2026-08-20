@@ -1,5 +1,6 @@
 //! passm-sync: git-backed sync (git2), PAT storage (keyring), device identity.
 
+pub mod android_proxy;
 pub mod device_id;
 pub mod error;
 pub mod git_repo;

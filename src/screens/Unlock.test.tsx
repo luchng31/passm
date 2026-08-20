@@ -17,6 +17,8 @@ const sessionValue = {
   unlocked: false,
   deviceId: '',
   setUnlocked: vi.fn(),
+  refreshTick: 0,
+  bumpRefresh: vi.fn(),
 };
 
 function renderUnlock() {

@@ -8,8 +8,8 @@
 
 use crate::error::SyncError;
 use git2::{
-    build::RepoBuilder, Cred, CredentialType, ErrorCode, FetchOptions, Oid, PushOptions,
-    RemoteCallbacks, Repository, Signature,
+    build::RepoBuilder, Cred, CredentialType, ErrorCode, FetchOptions, Oid, ProxyOptions,
+    PushOptions, RemoteCallbacks, Repository, Signature,
 };
 use libgit2_sys::{
     git_libgit2_init, git_libgit2_opts, GIT_OPT_ADD_SSL_X509_CERT, GIT_OPT_SET_SERVER_CONNECT_TIMEOUT,
@@ -157,6 +157,91 @@ fn pat_credentials(
     move |_url, _username, _allowed| Cred::userpass_plaintext(CRED_USERNAME, &pat)
 }
 
+/// Returns the proxy URL for git operations: the Android system proxy (set
+/// via `MainActivity` JNI) takes precedence, then the standard `HTTPS_PROXY`/
+/// `ALL_PROXY`/`HTTP_PROXY` env vars. libgit2's HTTP transport only supports
+/// HTTP/HTTPS CONNECT proxies, so SOCKS URLs are ignored.
+pub fn proxy_from_env() -> Option<String> {
+    if let Some(android) = crate::android_proxy::android_proxy() {
+        if !android.is_empty() {
+            return Some(format!("http://{android}"));
+        }
+    }
+    for var in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ] {
+        if let Some(url) = std::env::var(var).ok().filter(|v| !v.is_empty()) {
+            let scheme = url.split("://").next().unwrap_or("");
+            if matches!(scheme, "http" | "https") {
+                return Some(url);
+            }
+        }
+    }
+    None
+}
+
+/// Applies the configured proxy (if any) to a fetch operation.
+fn apply_fetch_proxy(fetch_opts: &mut FetchOptions<'_>) {
+    if let Some(proxy) = proxy_from_env() {
+        let mut opts = ProxyOptions::new();
+        opts.url(&proxy);
+        fetch_opts.proxy_options(opts);
+    }
+}
+
+/// Applies the configured proxy (if any) to a push operation.
+fn apply_push_proxy(push_opts: &mut PushOptions<'_>) {
+    if let Some(proxy) = proxy_from_env() {
+        let mut opts = ProxyOptions::new();
+        opts.url(&proxy);
+        push_opts.proxy_options(opts);
+    }
+}
+
+/// True when a git error is a transient network/transport failure that a
+/// retry may recover from (TLS syscall aborts, connection resets, timeouts).
+/// A retry re-runs the whole libgit2 connect/handshake, so it can also
+/// recover from address-family fallback races (e.g. a dead IPv6 route).
+fn is_transient_net_error(e: &git2::Error) -> bool {
+    let msg = e.message().to_ascii_lowercase();
+    msg.contains("ssl error")
+        || msg.contains("connection")
+        || msg.contains("broken pipe")
+        || msg.contains("timeout")
+        || msg.contains("reset")
+        || msg.contains("eof")
+        || msg.contains("abort")
+        || msg.contains("unreachable")
+        || msg.contains("failed to resolve")
+}
+
+/// Runs a network closure, retrying up to `attempts` times when it fails with
+/// a transient error. Each attempt re-enters libgit2's connect logic.
+fn with_net_retry<T>(
+    attempts: usize,
+    mut op: impl FnMut() -> Result<T, SyncError>,
+) -> Result<T, SyncError> {
+    let mut last_err = None;
+    for _ in 0..attempts {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(SyncError::Git(e)) if is_transient_net_error(&e) => {
+                last_err = Some(SyncError::Git(e));
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        SyncError::Git(git2::Error::from_str("network operation failed"))
+    }))
+}
+
 /// Opens the repository previously set up by `ensure_clone`.
 fn open_repo() -> Result<Repository, SyncError> {
     let guard = REPO_DIR
@@ -226,11 +311,14 @@ pub fn ensure_clone(remote_url: &str, local_dir: &Path, pat: &str) -> Result<(),
         callbacks.credentials(pat_credentials(pat.to_string()));
         let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
+        apply_fetch_proxy(&mut fetch_opts);
         let mut builder = RepoBuilder::new();
         builder.fetch_options(fetch_opts);
-        builder
-            .clone(remote_url, local_dir)
-            .map_err(SyncError::Git)?;
+        with_net_retry(3, || {
+            builder
+                .clone(remote_url, local_dir)
+                .map_err(SyncError::Git)
+        })?;
     }
     let repo = Repository::open(local_dir).map_err(SyncError::Git)?;
     let origin_url = match repo.find_remote(REMOTE_NAME) {
@@ -255,16 +343,19 @@ pub fn fetch(pat: &str) -> Result<(), SyncError> {
     // has no system trust store). Injection is idempotent, so re-running on
     // every call is safe.
     ensure_cert_store()?;
-    let repo = open_repo()?;
-    let mut remote = repo.find_remote(REMOTE_NAME).map_err(SyncError::Git)?;
-    let mut callbacks = RemoteCallbacks::new();
-    callbacks.credentials(pat_credentials(pat.to_string()));
-    let mut fetch_opts = FetchOptions::new();
-    fetch_opts.remote_callbacks(callbacks);
-    remote
-        .fetch(&[FETCH_REFSPEC], Some(&mut fetch_opts), Some("passm fetch"))
-        .map_err(SyncError::Git)?;
-    Ok(())
+    with_net_retry(3, || {
+        let repo = open_repo()?;
+        let mut remote = repo.find_remote(REMOTE_NAME).map_err(SyncError::Git)?;
+        let mut callbacks = RemoteCallbacks::new();
+        callbacks.credentials(pat_credentials(pat.to_string()));
+        let mut fetch_opts = FetchOptions::new();
+        fetch_opts.remote_callbacks(callbacks);
+        apply_fetch_proxy(&mut fetch_opts);
+        remote
+            .fetch(&[FETCH_REFSPEC], Some(&mut fetch_opts), Some("passm fetch"))
+            .map_err(SyncError::Git)?;
+        Ok(())
+    })
 }
 
 /// Pushes the current branch to `origin`. A rejected non-fast-forward push
@@ -275,43 +366,46 @@ pub fn push(pat: &str) -> Result<(), SyncError> {
     // has no system trust store). Injection is idempotent, so re-running on
     // every call is safe.
     ensure_cert_store()?;
-    let repo = open_repo()?;
-    let head = repo.head().map_err(SyncError::Git)?;
-    let branch = head
-        .shorthand()
-        .ok()
-        .ok_or_else(|| SyncError::Git(git2::Error::from_str("HEAD is detached")))?;
-    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    with_net_retry(3, || {
+        let repo = open_repo()?;
+        let head = repo.head().map_err(SyncError::Git)?;
+        let branch = head
+            .shorthand()
+            .ok()
+            .ok_or_else(|| SyncError::Git(git2::Error::from_str("HEAD is detached")))?;
+        let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
 
-    let mut remote = repo.find_remote(REMOTE_NAME).map_err(SyncError::Git)?;
-    let rejected: RefCell<Option<String>> = RefCell::new(None);
-    let mut callbacks = RemoteCallbacks::new();
-    callbacks.credentials(pat_credentials(pat.to_string()));
-    callbacks.push_update_reference(|refname, status| {
-        if let Some(reason) = status {
-            *rejected.borrow_mut() = Some(format!("{refname}: {reason}"));
-        }
-        Ok(())
-    });
-    let mut push_opts = PushOptions::new();
-    push_opts.remote_callbacks(callbacks);
+        let mut remote = repo.find_remote(REMOTE_NAME).map_err(SyncError::Git)?;
+        let rejected: RefCell<Option<String>> = RefCell::new(None);
+        let mut callbacks = RemoteCallbacks::new();
+        callbacks.credentials(pat_credentials(pat.to_string()));
+        callbacks.push_update_reference(|refname, status| {
+            if let Some(reason) = status {
+                *rejected.borrow_mut() = Some(format!("{refname}: {reason}"));
+            }
+            Ok(())
+        });
+        let mut push_opts = PushOptions::new();
+        push_opts.remote_callbacks(callbacks);
+        apply_push_proxy(&mut push_opts);
 
-    match remote.push(&[refspec.as_str()], Some(&mut push_opts)) {
-        Err(e) if e.code() == ErrorCode::NotFastForward => Err(SyncError::NonFastForward),
-        Err(e) if e.message().to_lowercase().contains("non-fast-forward") => {
-            Err(SyncError::NonFastForward)
-        }
-        Err(e) => Err(SyncError::Git(e)),
-        Ok(()) => match rejected.borrow().as_deref() {
-            Some(reason) if reason.to_lowercase().contains("non-fast-forward") => {
+        match remote.push(&[refspec.as_str()], Some(&mut push_opts)) {
+            Err(e) if e.code() == ErrorCode::NotFastForward => Err(SyncError::NonFastForward),
+            Err(e) if e.message().to_lowercase().contains("non-fast-forward") => {
                 Err(SyncError::NonFastForward)
             }
-            Some(reason) => Err(SyncError::Git(git2::Error::from_str(&format!(
-                "push rejected: {reason}"
-            )))),
-            None => Ok(()),
-        },
-    }
+            Err(e) => Err(SyncError::Git(e)),
+            Ok(()) => match rejected.borrow().as_deref() {
+                Some(reason) if reason.to_lowercase().contains("non-fast-forward") => {
+                    Err(SyncError::NonFastForward)
+                }
+                Some(reason) => Err(SyncError::Git(git2::Error::from_str(&format!(
+                    "push rejected: {reason}"
+                )))),
+                None => Ok(()),
+            },
+        }
+    })
 }
 
 /// True when `local_head` can be pushed onto `remote_head` as a fast-forward
@@ -505,6 +599,63 @@ mod tests {
         ensure_cert_store().unwrap();
         // Second call must not fail: the store add is idempotent.
         ensure_cert_store().unwrap();
+    }
+
+    #[test]
+    fn proxy_from_env_reads_https_proxy() {
+        // SAFETY: env mutation is test-local; `_guard` serializes against other
+        // tests, and the vars are restored at the end of this test.
+        unsafe {
+            std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:10809");
+        }
+        assert_eq!(
+            proxy_from_env(),
+            Some("http://127.0.0.1:10809".to_string())
+        );
+        unsafe {
+            std::env::remove_var("HTTPS_PROXY");
+        }
+    }
+
+    #[test]
+    fn proxy_from_env_falls_back_to_all_proxy() {
+        unsafe {
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::remove_var("https_proxy");
+            std::env::set_var("ALL_PROXY", "http://proxy.local:8080");
+        }
+        assert_eq!(
+            proxy_from_env(),
+            Some("http://proxy.local:8080".to_string())
+        );
+        unsafe {
+            std::env::remove_var("ALL_PROXY");
+        }
+    }
+
+    #[test]
+    fn proxy_from_env_ignores_socks() {
+        unsafe {
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::set_var("ALL_PROXY", "socks5://127.0.0.1:10808");
+        }
+        assert_eq!(proxy_from_env(), None);
+        unsafe {
+            std::env::remove_var("ALL_PROXY");
+        }
+    }
+
+    #[test]
+    fn proxy_from_env_none_when_unset() {
+        unsafe {
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::remove_var("https_proxy");
+            std::env::remove_var("ALL_PROXY");
+            std::env::remove_var("all_proxy");
+            std::env::remove_var("HTTP_PROXY");
+            std::env::remove_var("http_proxy");
+        }
+        assert_eq!(proxy_from_env(), None);
     }
 
     #[test]

@@ -177,12 +177,41 @@ pub fn unlock_vault(password: &str, blob: &[u8]) -> Result<(Vault, [u8; 32]), Co
     )?);
     let vault_key = passm_crypto::derive_vault_key(&master)
         .map_err(|e| CommandError::Internal(format!("HKDF expand failed: {e}")))?;
-    let plaintext = envelope::decrypt(&vault_key, blob).map_err(|e| match e {
+    let vault = decrypt_vault_with_key(&vault_key, blob)?;
+    Ok((vault, vault_key))
+}
+
+/// Decrypts a vault blob with an already-derived vault key (no password
+/// derivation). Used to reload the session vault after a sync rewrote the
+/// on-disk blob, so the in-memory `list()` view matches the synced file.
+pub fn decrypt_vault_with_key(
+    vault_key: &[u8; 32],
+    blob: &[u8],
+) -> Result<Vault, CommandError> {
+    let plaintext = envelope::decrypt(vault_key, blob).map_err(|e| match e {
         envelope::EnvelopeError::AuthenticationFailed => CommandError::WrongPassword,
         other => CommandError::Envelope(other),
     })?;
-    let vault: Vault = serde_json::from_slice(&plaintext)?;
-    Ok((vault, vault_key))
+    Ok(serde_json::from_slice(&plaintext)?)
+}
+
+/// Reloads the decrypted vault from the on-disk blob into the session state.
+/// The sync engine rewrites `repo/vault.enc` on pull/merge, so the in-memory
+/// vault must be refreshed for subsequent `list` calls to reflect the sync.
+pub fn reload_session_vault(app: &AppHandle, vault_key: &[u8; 32]) -> Result<(), CommandError> {
+    let paths = app.state::<AppPaths>();
+    let blob_path = paths.data_dir.join("repo").join(passm_sync::VAULT_FILE);
+    let blob = fs::read(&blob_path).map_err(|e| match e.kind() {
+        ErrorKind::NotFound => CommandError::VaultFileMissing,
+        _ => CommandError::Io(e),
+    })?;
+    let vault = decrypt_vault_with_key(vault_key, &blob)?;
+    let state = app.state::<Mutex<SessionState>>();
+    let mut guard = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.vault = Some(vault);
+    Ok(())
 }
 
 /// Pure: derive keys from a fresh random salt + default KDF params and encrypt
@@ -423,11 +452,13 @@ async fn sync_now_inner(app: &AppHandle) -> Result<SyncStatus, CommandError> {
     };
     let pat_store = passm_sync::KeyringPatStore::new()?;
     let pat = Zeroizing::new(pat_store.get()?.ok_or(CommandError::SyncNotConfigured)?);
+    let reload_key = vault_key.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         passm_sync::sync(&pat, &vault_key, &device_id)
     })
     .await
     .map_err(|e| CommandError::Internal(e.to_string()))??;
+    reload_session_vault(app, &reload_key)?;
     Ok(SyncStatus::from(&outcome))
 }
 

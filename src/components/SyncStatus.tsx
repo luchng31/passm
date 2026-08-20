@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { syncNow } from '../lib/api';
 import type { SyncStatus as SyncStatusResult } from '../lib/api';
+import { useSession } from '../lib/session';
 
 /**
  * Sync status indicator: manual "同步" button plus the last sync outcome
  * (pushed / pulled / merged / backup) and any error from the backend.
  */
 export function SyncStatus() {
+  const { bumpRefresh } = useSession();
   const [result, setResult] = useState<SyncStatusResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -16,6 +18,7 @@ export function SyncStatus() {
     setError(null);
     try {
       setResult(await syncNow());
+      bumpRefresh();
     } catch (err) {
       setError(String(err));
     } finally {

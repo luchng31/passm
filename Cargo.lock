@@ -3035,6 +3035,7 @@ version = "0.1.0"
 dependencies = [
  "android-native-keyring-store",
  "git2",
+ "jni",
  "keyring",
  "keyring-core",
  "libgit2-sys",

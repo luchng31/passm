@@ -6,8 +6,10 @@ import { useCopyTimer } from '../lib/copy';
 import { filterEntries } from '../lib/search';
 import { ConfirmButton } from '../components/ConfirmButton';
 import { ItemEditor } from './ItemEditor';
+import { useSession } from '../lib/session';
 
 export function VaultList() {
+  const { refreshTick } = useSession();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -29,7 +31,7 @@ export function VaultList() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshTick]);
 
   const filtered = useMemo(() => filterEntries(entries, query), [entries, query]);
 

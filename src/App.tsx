@@ -10,6 +10,7 @@ import { VaultList } from './screens/VaultList';
 export function App() {
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     getSessionStatus()
@@ -46,6 +47,8 @@ export function App() {
     unlocked: status.unlocked,
     deviceId: status.device_id,
     setUnlocked: (unlocked) => setStatus({ unlocked, device_id: status.device_id }),
+    refreshTick,
+    bumpRefresh: () => setRefreshTick((t) => t + 1),
   };
 
   return (
