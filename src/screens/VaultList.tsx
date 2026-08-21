@@ -1,30 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { TouchEvent as ReactTouchEvent } from 'react';
 import { copy, deleteEntry, list } from '../lib/api';
 import type { Entry } from '../lib/api';
 import type { CopyField } from '../lib/copy';
 import { useCopyTimer } from '../lib/copy';
 import { filterEntries } from '../lib/search';
-import { ConfirmButton } from '../components/ConfirmButton';
 import { ItemEditor } from './ItemEditor';
 import { useSession } from '../lib/session';
 
-const AVATAR_COLORS = [
-  '#4f46e5',
-  '#0a84ff',
-  '#30b0c7',
-  '#30d158',
-  '#ff9f0a',
-  '#ff375f',
-  '#bf5af2',
-  '#ff6482',
-];
-
-function avatarColor(title: string): string {
+/**
+ * Calm, premium avatar differentiation: a single accent hue (see --avatar-bg /
+ * --avatar-fg tokens) rotated slightly per entry so entries stay distinct
+ * without breaking the color-consistency lock. No rainbow primaries.
+ */
+function avatarHue(title: string): number {
   let hash = 0;
   for (let i = 0; i < title.length; i++) {
     hash = (hash * 31 + title.charCodeAt(i)) >>> 0;
   }
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  return ((hash % 7) - 3) * 16; // -48deg .. +48deg around the accent hue
 }
 
 function SearchIcon() {
@@ -32,6 +26,33 @@ function SearchIcon() {
     <svg className="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
       <path d="M20 20l-3.2-3.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="9" y="9" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="2" />
+      <path d="M5 15V6a2 2 0 0 1 2-2h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function EmptyIllustration() {
+  return (
+    <svg className="empty-illustration" width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="10" width="16" height="10" rx="3" stroke="currentColor" strokeWidth="2" />
+      <path d="M8 10V7.5a4 4 0 0 1 8 0V10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="15" r="1.6" fill="currentColor" />
     </svg>
   );
 }
@@ -81,6 +102,63 @@ export function VaultList() {
     }
   };
 
+  // 编辑 / 删除 are reached via right-click (desktop) or long-press (touch)
+  // on the card, not via inline buttons, to keep the row to the two copy
+  // actions only. Delete is a two-step confirm inside the menu.
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number; confirming: boolean } | null>(
+    null,
+  );
+  const longPressTimer = useRef<number | null>(null);
+  const longPressFired = useRef(false);
+
+  const openMenu = (entry: Entry, x: number, y: number) => {
+    setMenu({ id: entry.id, x, y, confirming: false });
+  };
+  const closeMenu = () => setMenu(null);
+
+  const startLongPress = (e: ReactTouchEvent<HTMLLIElement>, entry: Entry) => {
+    longPressFired.current = false;
+    const touch = e.touches[0];
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    longPressTimer.current = window.setTimeout(() => {
+      longPressFired.current = true;
+      openMenu(entry, x, y);
+    }, 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+  const endLongPress = (e: ReactTouchEvent<HTMLLIElement>) => {
+    if (longPressFired.current) {
+      // suppress the click that follows a long-press
+      e.preventDefault();
+      longPressFired.current = false;
+    }
+    cancelLongPress();
+  };
+
+  useEffect(() => {
+    if (menu === null) return;
+    const onDocClick = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('.entry-menu')) return;
+      closeMenu();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeMenu();
+    };
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+
   if (editing !== undefined) {
     return (
       <ItemEditor
@@ -120,20 +198,59 @@ export function VaultList() {
       </div>
       {error !== null && <div className="error">{error}</div>}
       {loading ? (
-        <p className="muted">
-          <span className="spinner" aria-hidden="true" />
-          加载中…
-        </p>
+        <ul className="skeleton-list" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <li className="skeleton-row" key={i}>
+              <div className="skeleton-head">
+                <div className="skeleton-avatar" />
+                <div className="skeleton-lines">
+                  <div className="skeleton-line skeleton-line--title" />
+                  <div className="skeleton-line skeleton-line--sub" />
+                </div>
+              </div>
+              <div className="skeleton-btn" />
+            </li>
+          ))}
+        </ul>
       ) : filtered.length === 0 ? (
-        <p className="muted">
-          {entries.length === 0 ? '保险库为空，点击"新建"添加第一个条目' : '没有匹配的条目'}
-        </p>
+        entries.length === 0 ? (
+          <div className="empty-state">
+            <EmptyIllustration />
+            <p className="empty-title">保险库为空，点击"新建"添加第一个条目</p>
+            <p className="empty-hint">密码会加密保存在本地，并随同步仓库备份。</p>
+            <button className="btn btn-primary" onClick={() => setEditing(null)}>
+              新建
+            </button>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <EmptyIllustration />
+            <p className="empty-title">没有匹配的条目</p>
+            <p className="empty-hint">尝试更换关键词，或清空搜索框查看全部。</p>
+          </div>
+        )
       ) : (
         <ul className="entry-list">
           {filtered.map((entry, index) => (
-            <li key={entry.id} className="entry-card" style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}>
+            <li
+              key={entry.id}
+              className="entry-card"
+              style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const rect = e.currentTarget.getBoundingClientRect();
+                openMenu(entry, e.clientX - rect.left, e.clientY - rect.top);
+              }}
+              onTouchStart={(e) => startLongPress(e, entry)}
+              onTouchEnd={endLongPress}
+              onTouchMove={cancelLongPress}
+            >
               <div className="entry-main">
-                <div className="avatar" style={{ background: avatarColor(entry.title) }} aria-hidden="true">
+                <div
+                  className="avatar"
+                  style={{ filter: `hue-rotate(${avatarHue(entry.title)}deg)` }}
+                  aria-hidden="true"
+                >
                   {entry.title.trim().charAt(0).toUpperCase() || '•'}
                 </div>
                 <div className="entry-info">
@@ -141,24 +258,70 @@ export function VaultList() {
                   <span className="entry-username">{entry.username}</span>
                 </div>
               </div>
-              <div className="entry-actions">
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => void handleCopy('password', entry.id)}
-                >
-                  {copiedField === 'password' && copiedId === entry.id ? '已复制' : '复制密码'}
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => void handleCopy('username', entry.id)}
-                >
+              <button
+                className={`btn entry-copy-primary${
+                  copiedField === 'password' && copiedId === entry.id ? ' is-copied' : ''
+                }`}
+                onClick={() => void handleCopy('password', entry.id)}
+              >
+                {copiedField === 'password' && copiedId === entry.id ? <CheckIcon /> : <CopyIcon />}
+                {copiedField === 'password' && copiedId === entry.id ? '已复制' : '复制密码'}
+              </button>
+              <div className="entry-secondary">
+                <button className="btn btn-ghost" onClick={() => void handleCopy('username', entry.id)}>
                   {copiedField === 'username' && copiedId === entry.id ? '已复制' : '复制用户名'}
                 </button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setEditing(entry)}>
-                  编辑
-                </button>
-                <ConfirmButton label="删除" onConfirm={() => void handleDelete(entry.id)} />
               </div>
+              {menu?.id === entry.id && (
+                <div className="entry-menu" style={{ top: menu.y, left: menu.x }} role="menu">
+                  {!menu.confirming ? (
+                    <>
+                      <button
+                        type="button"
+                        className="entry-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          setEditing(entry);
+                          closeMenu();
+                        }}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="entry-menu-item entry-menu-item--danger"
+                        role="menuitem"
+                        onClick={() => setMenu((m) => (m ? { ...m, confirming: true } : m))}
+                      >
+                        删除
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="entry-menu-confirm">确认删除?</span>
+                      <button
+                        type="button"
+                        className="entry-menu-item entry-menu-item--danger"
+                        role="menuitem"
+                        onClick={() => {
+                          void handleDelete(entry.id);
+                          closeMenu();
+                        }}
+                      >
+                        确认
+                      </button>
+                      <button
+                        type="button"
+                        className="entry-menu-cancel"
+                        role="menuitem"
+                        onClick={() => setMenu((m) => (m ? { ...m, confirming: false } : m))}
+                      >
+                        取消
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>
