@@ -1,11 +1,27 @@
 import { useEffect, useState } from 'react';
-import { createVault, getSyncConfig, hasVault, setSyncConfig, unlock } from '../lib/api';
+import { createVault, getSyncConfig, hasVault, setSyncConfig, syncNow, unlock } from '../lib/api';
 import { useSession } from '../lib/session';
 
 type Stage = 'loading' | 'config' | 'create' | 'unlock';
 
+function LockMark() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4.5" y="10.5" width="15" height="10" rx="3" fill="currentColor" opacity="0.95" />
+      <path
+        d="M7.5 10.5V8a4.5 4.5 0 0 1 9 0v2.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <circle cx="12" cy="15.5" r="1.6" fill="#fff" />
+    </svg>
+  );
+}
+
 export function Unlock() {
-  const { setUnlocked } = useSession();
+  const { setUnlocked, bumpRefresh } = useSession();
   const [stage, setStage] = useState<Stage>('loading');
   // config form
   const [remoteUrl, setRemoteUrl] = useState('');
@@ -83,6 +99,16 @@ export function Unlock() {
     setError(null);
     try {
       await unlock(password);
+      // 后端 unlock 内部已尽力同步，但部分旧构建(certfix9)解锁后内存 vault
+      // 未刷新，导致列表仍显示同步前的数据。这里再走一次与手动“同步”相同的
+      // 可靠 reload 路径(空闲时幂等)，并 bumpRefresh 让 VaultList 重新拉取，
+      // 确保解锁时从远端拉取到的【新增/变更】能立即显示。
+      try {
+        await syncNow();
+      } catch {
+        // 离线或未配置同步时忽略：此时无远端变更，本地即为最新
+      }
+      bumpRefresh();
       setPassword('');
       setUnlocked(true);
     } catch (err) {
@@ -103,14 +129,19 @@ export function Unlock() {
     return (
       <div className="unlock-screen">
         <form className="unlock-card" onSubmit={(e) => void handleConfig(e)}>
-          <h2>首次使用</h2>
-          <p className="unlock-hint">配置同步仓库以开始使用</p>
+          <div className="unlock-brand">
+            <span className="unlock-mark">
+              <LockMark />
+            </span>
+            <h2 className="unlock-title">首次使用</h2>
+            <p className="unlock-hint">配置同步仓库以开始使用</p>
+          </div>
           <input
             className="input"
             type="text"
             value={remoteUrl}
             onChange={(e) => setRemoteUrl(e.target.value)}
-            placeholder="GitHub 仓库地址（https://github.com/…/vault.git）"
+            placeholder="GitHub 仓库地址"
             autoFocus
             disabled={loading}
           />
@@ -119,17 +150,20 @@ export function Unlock() {
             type="password"
             value={pat}
             onChange={(e) => setPat(e.target.value)}
-            placeholder="GitHub 个人访问令牌 (PAT)"
+            placeholder="个人访问令牌 (PAT)"
             disabled={loading}
           />
           {error !== null && <div className="error">{error}</div>}
-          <button
-            className="btn btn-primary btn-block"
-            type="submit"
-            disabled={loading || remoteUrl.trim().length === 0 || pat.length === 0}
-          >
-            {loading ? '保存中…' : '保存配置'}
-          </button>
+          <div className="unlock-actions">
+            <button
+              className="btn btn-primary btn-block"
+              type="submit"
+              disabled={loading || remoteUrl.trim().length === 0 || pat.length === 0}
+            >
+              {loading && <span className="spinner" aria-hidden="true" />}
+              {loading ? '保存中…' : '保存配置'}
+            </button>
+          </div>
           <p className="unlock-hint">PAT 仅保存在系统密钥库中，不会写入仓库</p>
         </form>
       </div>
@@ -140,8 +174,13 @@ export function Unlock() {
     return (
       <div className="unlock-screen">
         <form className="unlock-card" onSubmit={(e) => void handleCreate(e)}>
-          <h2>创建保险库</h2>
-          <p className="unlock-hint">设置主密码（请务必牢记，忘记无法找回）</p>
+          <div className="unlock-brand">
+            <span className="unlock-mark">
+              <LockMark />
+            </span>
+            <h2 className="unlock-title">创建保险库</h2>
+            <p className="unlock-hint">设置主密码（请务必牢记，忘记无法找回）</p>
+          </div>
           <input
             className="input"
             type="password"
@@ -160,13 +199,16 @@ export function Unlock() {
             disabled={loading}
           />
           {error !== null && <div className="error">{error}</div>}
-          <button
-            className="btn btn-primary btn-block"
-            type="submit"
-            disabled={loading || password.length === 0 || passwordConfirm.length === 0}
-          >
-            {loading ? '创建中…' : '创建并进入'}
-          </button>
+          <div className="unlock-actions">
+            <button
+              className="btn btn-primary btn-block"
+              type="submit"
+              disabled={loading || password.length === 0 || passwordConfirm.length === 0}
+            >
+              {loading && <span className="spinner" aria-hidden="true" />}
+              {loading ? '创建中…' : '创建并进入'}
+            </button>
+          </div>
         </form>
       </div>
     );
@@ -175,8 +217,13 @@ export function Unlock() {
   return (
     <div className="unlock-screen">
       <form className="unlock-card" onSubmit={(e) => void handleUnlock(e)}>
-        <h2>解锁保险库</h2>
-        <p className="unlock-hint">输入主密码以解锁</p>
+        <div className="unlock-brand">
+          <span className="unlock-mark">
+            <LockMark />
+          </span>
+          <h2 className="unlock-title">解锁保险库</h2>
+          <p className="unlock-hint">输入主密码以解锁</p>
+        </div>
         <input
           className="input"
           type="password"
@@ -187,13 +234,16 @@ export function Unlock() {
           disabled={loading}
         />
         {error !== null && <div className="error">{error}</div>}
-        <button
-          className="btn btn-primary btn-block"
-          type="submit"
-          disabled={loading || password.length === 0}
-        >
-          {loading ? '解锁中…' : '解锁'}
-        </button>
+        <div className="unlock-actions">
+          <button
+            className="btn btn-primary btn-block"
+            type="submit"
+            disabled={loading || password.length === 0}
+          >
+            {loading && <span className="spinner" aria-hidden="true" />}
+            {loading ? '解锁并同步中…' : '解锁'}
+          </button>
+        </div>
       </form>
     </div>
   );

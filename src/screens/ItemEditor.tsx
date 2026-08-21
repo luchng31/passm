@@ -13,6 +13,17 @@ interface ItemEditorProps {
   onDeleted: (id: string) => void;
 }
 
+function passwordStrength(pw: string): number {
+  if (pw.length === 0) return 0;
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/\d/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  return Math.min(score, 4);
+}
+
 export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorProps) {
   const [title, setTitle] = useState(entry?.title ?? '');
   const [username, setUsername] = useState(entry?.username ?? '');
@@ -23,6 +34,9 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { copiedField, copiedId, copyWithTimer } = useCopyTimer();
+
+  const strength = passwordStrength(password);
+  const strengthLevel = strength <= 1 ? 'weak' : strength === 2 ? 'medium' : 'strong';
 
   const handleSave = async () => {
     setSaving(true);
@@ -66,7 +80,7 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
 
   return (
     <div className="editor">
-      <h2>{entry === null ? '新建条目' : '编辑条目'}</h2>
+      <h2 className="editor-title">{entry === null ? '新建条目' : '编辑条目'}</h2>
       {error !== null && <div className="error">{error}</div>}
       <form
         className="editor-form"
@@ -99,6 +113,16 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
               生成密码
             </button>
           </div>
+          {password.length > 0 && (
+            <div className="strength" aria-hidden="true">
+              {[0, 1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  className={`strength-bar${i < strength ? ` is-${strengthLevel}` : ''}`}
+                />
+              ))}
+            </div>
+          )}
         </label>
         <label className="field">
           <span>网址</span>
@@ -126,6 +150,7 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
         )}
         <div className="editor-actions">
           <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving && <span className="spinner" aria-hidden="true" />}
             {saving ? '保存中…' : '保存'}
           </button>
           <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={saving}>

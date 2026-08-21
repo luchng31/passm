@@ -181,3 +181,15 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - 修复(certfix7): ① 删除 jniLibs/arm64-v8a/libandroid_native_keyring_store.so; ② Keyring.kt 改 `System.loadLibrary("passm_app_lib")` — JNI 符号解析到主库自己的导出, 与 Store::new() 共享同一 ANDROID_CONTEXT。构建不会自动重新生成独立 cdylib(它只是手工拷贝的静态文件), 删掉即永久移除。
 - 教训: certfix5 只验证了编译通过, 没验证运行时! Android keyring store 首次真机运行即 panic。后续 Android 修复必须查 logcat, 不能只看 build 成功。
 - certfix7: /tmp/opencode/passm-v1.0.5-certfix7.apk, SHA-256 b09b6d8c5dedbff1795d20fd0032a27652fabea0fba0ffdc5567e995b933548b, 17,225,102B, 证书 365fe2c8...dd843(覆盖安装兼容)。APK 内只有 libpassm_app_lib.so。
+
+## [2026-08-21] certfix10 — Tauri 不把 dist 拷进 Android assets（前端必须手动注入）
+- 症状: `tauri android build --apk -t aarch64` 产出的 unsigned APK，`assets/` 里**只有** `tauri.conf.json`，没有 index.html/JS/CSS → 装上去白屏。Tauri 只把 conf.json 写进 `app/src/main/assets/`，不会自动拷贝 `frontendDist`(`../dist`)，即使 `beforeBuildCommand` 为空、dist 已存在。
+- 根因: 本机环境 Tauri 2 的 android build 跳过了前端复制步骤；`app/src/main/assets/` 与最终 APK 的 `assets/` 是同一来源(gradle `mergeReleaseAssets` 打包它)，所以只要往该目录塞文件就能进 APK。
+- 修复(每次前端改动后, 在拿到 unsigned APK 之后): 手动注入再对齐签名。**必须用 append, 绝不可解压整包再重新打** —— python 重打整包会丢掉/损坏 14.5MB 的 `lib/arm64-v8a/libpassm_app_lib.so`, 产出 7MB 坏包, 手机安装报"安装文件错误/文件损坏"。
+  1. `cp unsigned.apk base.apk`(保留原始整包, 它已含 .so, 不要解压它)
+  2. python `zipfile.ZipFile(base.apk,'a',ZIP_DEFLATED)` 追加前端: `for f in dist 下所有文件: z.write(f, os.path.join('assets', relpath(f, dist)))` —— 只加前端, 原生库原样保留
+  3. `zipalign -p 4 base.apk aligned.apk`(在 `$ANDROID_HOME/build-tools/35.0.0/`)
+  4. `apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android --ks-key-alias androiddebugkey --out passm-certfix10.apk aligned.apk`
+  5. 验证: 包体应 **~17MB**(`unzip -l` 同时含 `lib/arm64-v8a/libpassm_app_lib.so` 14.5MB 与 `assets/index.html`); `apksigner verify --print-certs` 的 SHA-256 == 365fe2c8...dd843(覆盖安装兼容)
+- **勿用** `./gradlew :app:assembleUniversalRelease` 单独重打(缺 tauri server-addr 会 panic)；必须用 `tauri android build` 出骨架再注入。
+- certfix10: /tmp/opencode/passm-v1.0.5-certfix10.apk, SHA-256 6918cb777bd00f137e9e2339ea17b6613924aa6e572a1c973e660030cc2f5fba, 7,792,232B, 证书 365fe2c8...dd843。前端改动: index.html 加 viewport-fit=cover; styles.css 给 .app-header/.app-main/.unlock-screen 加 safe-area-inset(桌面因 inset=0 不变)+ header 阴影 + entry-row 悬浮; Unlock.tsx 解锁按钮 loading 文案改「解锁并同步中…」(后端 unlock 已含 best-effort 自动同步, 仅补可见反馈)。

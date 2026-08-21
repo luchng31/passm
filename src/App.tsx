@@ -24,15 +24,26 @@ export function App() {
   // Poll the backend session state so tray "Lock" and the auto-lock timer
   // (both run in Rust, outside the webview) transition the UI to the Unlock
   // screen the same way the manual lock button does. Cheap local IPC call.
+  //
+  // IMPORTANT: only detect the lock transition (unlocked -> locked). We must
+  // NOT set unlocked=true from this poll, otherwise VaultList mounts the
+  // instant `unlock()` flips the backend flag — which is BEFORE the
+  // post-unlock `syncNow()` reload finishes — so it briefly renders the
+  // stale vault and then flips to the synced one (the "old -> new" flash).
+  // VaultList is mounted exclusively by the explicit setUnlocked(true) in
+  // Unlock.tsx, which fires only after the reload completes.
   useEffect(() => {
     const timer = window.setInterval(() => {
       getSessionStatus()
         .then((s) => {
-          setStatus((prev) =>
-            prev !== null && prev.unlocked === s.unlocked && prev.device_id === s.device_id
-              ? prev
-              : s,
-          );
+          setStatus((prev) => {
+            if (prev === null) return prev;
+            // external/tray/auto lock: true -> false
+            if (prev.unlocked && !s.unlocked) {
+              return { unlocked: false, device_id: s.device_id };
+            }
+            return prev;
+          });
         })
         .catch(() => undefined);
     }, 2000);
@@ -56,7 +67,9 @@ export function App() {
       <div className="app">
         <Header />
         {error !== null && <div className="error banner">{error}</div>}
-        <main className="app-main">{status.unlocked ? <VaultList /> : <Unlock />}</main>
+        <main className={status.unlocked ? 'app-main' : 'app-main app-main--auth'}>
+          {status.unlocked ? <VaultList /> : <Unlock />}
+        </main>
       </div>
     </SessionContext.Provider>
   );

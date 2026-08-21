@@ -8,6 +8,34 @@ import { ConfirmButton } from '../components/ConfirmButton';
 import { ItemEditor } from './ItemEditor';
 import { useSession } from '../lib/session';
 
+const AVATAR_COLORS = [
+  '#4f46e5',
+  '#0a84ff',
+  '#30b0c7',
+  '#30d158',
+  '#ff9f0a',
+  '#ff375f',
+  '#bf5af2',
+  '#ff6482',
+];
+
+function avatarColor(title: string): string {
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) {
+    hash = (hash * 31 + title.charCodeAt(i)) >>> 0;
+  }
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
+function SearchIcon() {
+  return (
+    <svg className="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+      <path d="M20 20l-3.2-3.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function VaultList() {
   const { refreshTick } = useSession();
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -76,31 +104,42 @@ export function VaultList() {
   return (
     <div className="vault">
       <div className="vault-toolbar">
-        <input
-          className="input search-box"
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索标题、用户名或网址…"
-        />
+        <div className="search">
+          <SearchIcon />
+          <input
+            className="input search-box"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索标题、用户名或网址…"
+          />
+        </div>
         <button className="btn btn-primary" onClick={() => setEditing(null)}>
           新建
         </button>
       </div>
       {error !== null && <div className="error">{error}</div>}
       {loading ? (
-        <p className="muted">加载中…</p>
+        <p className="muted">
+          <span className="spinner" aria-hidden="true" />
+          加载中…
+        </p>
       ) : filtered.length === 0 ? (
         <p className="muted">
           {entries.length === 0 ? '保险库为空，点击"新建"添加第一个条目' : '没有匹配的条目'}
         </p>
       ) : (
         <ul className="entry-list">
-          {filtered.map((entry) => (
-            <li key={entry.id} className="entry-row">
-              <div className="entry-info">
-                <span className="entry-title">{entry.title}</span>
-                <span className="entry-username">{entry.username}</span>
+          {filtered.map((entry, index) => (
+            <li key={entry.id} className="entry-card" style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}>
+              <div className="entry-main">
+                <div className="avatar" style={{ background: avatarColor(entry.title) }} aria-hidden="true">
+                  {entry.title.trim().charAt(0).toUpperCase() || '•'}
+                </div>
+                <div className="entry-info">
+                  <span className="entry-title">{entry.title}</span>
+                  <span className="entry-username">{entry.username}</span>
+                </div>
               </div>
               <div className="entry-actions">
                 <button

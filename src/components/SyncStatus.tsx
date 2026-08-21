@@ -38,6 +38,7 @@ export function SyncStatus() {
   return (
     <div className="sync-status">
       <button className="btn btn-ghost btn-sm" onClick={() => void handleSync()} disabled={syncing}>
+        {syncing && <span className="spinner" aria-hidden="true" />}
         {syncing ? '同步中…' : '同步'}
       </button>
       {error !== null && (
@@ -46,7 +47,7 @@ export function SyncStatus() {
         </span>
       )}
       {result !== null && (
-        <span className="sync-result" title={result.backup_created ?? undefined}>
+        <span className="sync-pill" title={result.backup_created ?? undefined}>
           上次同步: {actions.join(' · ')}
         </span>
       )}

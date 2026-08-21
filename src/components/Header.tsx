@@ -21,7 +21,7 @@ export function Header() {
       <h1 className="app-title">passm</h1>
       <div className="app-header-right">
         {error !== null && <span className="error">{error}</span>}
-        <SyncStatus />
+        {unlocked && <SyncStatus />}
         {unlocked && (
           <button className="btn btn-ghost" onClick={() => void handleLock()}>
             锁定

@@ -9,6 +9,7 @@ vi.mock('../lib/api', () => ({
   hasVault: vi.fn(),
   createVault: vi.fn(),
   unlock: vi.fn(),
+  syncNow: vi.fn(),
 }));
 
 import { createVault, getSyncConfig, hasVault, setSyncConfig, unlock } from '../lib/api';
