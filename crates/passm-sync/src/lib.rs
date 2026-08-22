@@ -6,6 +6,7 @@ pub mod error;
 pub mod git_repo;
 pub mod pat_store;
 pub mod sync_engine;
+pub(crate) mod system_proxy;
 
 pub use device_id::{load, load_or_create};
 pub use error::SyncError;

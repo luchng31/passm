@@ -12,14 +12,22 @@ use git2::{
     PushOptions, RemoteCallbacks, Repository, Signature,
 };
 use libgit2_sys::{
-    git_libgit2_init, git_libgit2_opts, GIT_OPT_ADD_SSL_X509_CERT, GIT_OPT_SET_SERVER_CONNECT_TIMEOUT,
+    git_libgit2_init, git_libgit2_opts, GIT_OPT_SET_SERVER_CONNECT_TIMEOUT,
     GIT_OPT_SET_SERVER_TIMEOUT,
 };
+// OpenSSL FFI is only linked where libgit2's HTTPS transport actually uses
+// OpenSSL (unix/android); Windows uses WinHTTP/Schannel instead.
+#[cfg(not(windows))]
+use libgit2_sys::GIT_OPT_ADD_SSL_X509_CERT;
+#[cfg(not(windows))]
 use openssl_sys::{BIO_free_all, BIO_new_mem_buf, PEM_read_bio_X509, X509_free};
 use std::cell::RefCell;
 use std::fs;
-use std::os::raw::{c_int, c_void};
+use std::os::raw::c_int;
+#[cfg(not(windows))]
+use std::os::raw::c_void;
 use std::path::{Component, Path, PathBuf};
+#[cfg(not(windows))]
 use std::ptr::null_mut;
 use std::sync::Mutex;
 
@@ -37,6 +45,7 @@ const FETCH_REFSPEC: &str = "+refs/heads/*:refs/remotes/origin/*";
 /// (git2-rs #920). `ensure_cert_store` parses this in memory and injects each
 /// certificate into libgit2's global OpenSSL store — no file I/O, which is
 /// unreliable on Android (`BIO_new_file` fails with `ERR_R_BIO_LIB`).
+#[cfg(not(windows))]
 const CACERT_BYTES: &[u8] = include_bytes!("../assets/cacert.pem");
 
 /// Connect timeout (ms) for git network ops. libgit2 has no default (relies on
@@ -58,12 +67,15 @@ const SERVER_TIMEOUT_MS: c_int = 60_000;
 /// matching the old rewrite-on-every-call behavior that healed stale state.
 /// Chain validation and the hostname SAN check remain fully enforced by
 /// libgit2/OpenSSL.
+///
+/// On Windows this only initializes libgit2 and sets timeouts: libgit2's
+/// WinHTTP transport verifies against the OS trust store, so no OpenSSL
+/// injection exists (or is needed).
 pub fn ensure_cert_store() -> Result<(), SyncError> {
     // SAFETY: `git_libgit2_init` is refcounted and thread-safe. It must run
-    // before the first `GIT_OPT_ADD_SSL_X509_CERT` call so libgit2's global
-    // SSL ctx (`git__ssl_ctx`, created by `git_openssl_stream_global_init`)
-    // exists. The `git2` crate also inits; the extra refcount is released on
-    // the final matching shutdown, so this is always sound.
+    // before any other libgit2 global option call. The `git2` crate also
+    // inits; the extra refcount is released on the final matching shutdown,
+    // so this is always sound.
     unsafe {
         git_libgit2_init();
     }
@@ -73,9 +85,21 @@ pub fn ensure_cert_store() -> Result<(), SyncError> {
     // (re-set to the same value on every call), and the values are only ever
     // read by libgit2's own transport layer while a connection is active.
     unsafe {
-        git_libgit2_opts(GIT_OPT_SET_SERVER_CONNECT_TIMEOUT as c_int, CONNECT_TIMEOUT_MS);
+        git_libgit2_opts(
+            GIT_OPT_SET_SERVER_CONNECT_TIMEOUT as c_int,
+            CONNECT_TIMEOUT_MS,
+        );
         git_libgit2_opts(GIT_OPT_SET_SERVER_TIMEOUT as c_int, SERVER_TIMEOUT_MS);
     }
+    #[cfg(not(windows))]
+    inject_ca_bundle()?;
+    Ok(())
+}
+
+/// Unix/Android only: parses the embedded CA bundle and adds every
+/// certificate to libgit2's global OpenSSL SSL store.
+#[cfg(not(windows))]
+fn inject_ca_bundle() -> Result<(), SyncError> {
     // SAFETY: `CACERT_BYTES` is a `'static` slice; `as_ptr` is valid for
     // `len` bytes and `BIO_new_mem_buf` copies the buffer into a new BIO, so
     // no borrow of the slice outlives this call. A null return means the BIO
@@ -161,12 +185,27 @@ fn pat_credentials(
 /// via `MainActivity` JNI) takes precedence, then the standard `HTTPS_PROXY`/
 /// `ALL_PROXY`/`HTTP_PROXY` env vars. libgit2's HTTP transport only supports
 /// HTTP/HTTPS CONNECT proxies, so SOCKS URLs are ignored.
+/// Resolves the proxy for git operations, in priority order:
+/// 1. the Android system HTTP proxy injected via JNI (desktop: never set),
+/// 2. the standard environment variables (`HTTPS_PROXY`, `ALL_PROXY`, …),
+/// 3. the OS-level system proxy (Windows WinINET settings — what browsers
+///    use), so a machine-wide proxy tool is honored without env vars.
+///
+/// Only `http://`/`https://` URLs are accepted; libgit2's transport does not
+/// speak SOCKS. Re-evaluated per call, so a changed proxy address is picked
+/// up on the next sync.
 pub fn proxy_from_env() -> Option<String> {
     if let Some(android) = crate::android_proxy::android_proxy() {
         if !android.is_empty() {
             return Some(format!("http://{android}"));
         }
     }
+    proxy_from_env_vars().or_else(crate::system_proxy::system_proxy)
+}
+
+/// Env-var-only half of [`proxy_from_env`], kept separate so the tests stay
+/// deterministic on machines that also have an OS-level proxy configured.
+fn proxy_from_env_vars() -> Option<String> {
     for var in [
         "HTTPS_PROXY",
         "https_proxy",
@@ -237,9 +276,8 @@ fn with_net_retry<T>(
             Err(e) => return Err(e),
         }
     }
-    Err(last_err.unwrap_or_else(|| {
-        SyncError::Git(git2::Error::from_str("network operation failed"))
-    }))
+    Err(last_err
+        .unwrap_or_else(|| SyncError::Git(git2::Error::from_str("network operation failed"))))
 }
 
 /// Opens the repository previously set up by `ensure_clone`.
@@ -315,9 +353,7 @@ pub fn ensure_clone(remote_url: &str, local_dir: &Path, pat: &str) -> Result<(),
         let mut builder = RepoBuilder::new();
         builder.fetch_options(fetch_opts);
         with_net_retry(3, || {
-            builder
-                .clone(remote_url, local_dir)
-                .map_err(SyncError::Git)
+            builder.clone(remote_url, local_dir).map_err(SyncError::Git)
         })?;
     }
     let repo = Repository::open(local_dir).map_err(SyncError::Git)?;
@@ -570,6 +606,15 @@ mod tests {
 
     const PAT: &str = "ghp_test_dummy_pat";
 
+    /// Cross-platform `file://` URI for a local path: libgit2 needs forward
+    /// slashes and, on Windows drive paths (`C:/...`), an extra leading slash
+    /// so the URI has the canonical three slashes.
+    fn file_uri(dir: &Path) -> String {
+        let normalized = dir.to_string_lossy().replace('\\', "/");
+        let leading = if normalized.starts_with('/') { "" } else { "/" };
+        format!("file://{leading}{normalized}")
+    }
+
     /// Serializes git_repo tests: they share the module-global `REPO_DIR`, so
     /// parallel execution would make one test operate on another's repository.
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -581,7 +626,7 @@ mod tests {
     fn bare_remote(parent: &Path) -> (PathBuf, String) {
         let dir = parent.join("remote.git");
         Repository::init_bare(&dir).unwrap();
-        let url = format!("file://{}", dir.display());
+        let url = file_uri(&dir);
         (dir, url)
     }
 
@@ -602,14 +647,14 @@ mod tests {
     }
 
     #[test]
-    fn proxy_from_env_reads_https_proxy() {
+    fn env_proxy_reads_https_proxy() {
         // SAFETY: env mutation is test-local; `_guard` serializes against other
         // tests, and the vars are restored at the end of this test.
         unsafe {
             std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:10809");
         }
         assert_eq!(
-            proxy_from_env(),
+            proxy_from_env_vars(),
             Some("http://127.0.0.1:10809".to_string())
         );
         unsafe {
@@ -618,14 +663,14 @@ mod tests {
     }
 
     #[test]
-    fn proxy_from_env_falls_back_to_all_proxy() {
+    fn env_proxy_falls_back_to_all_proxy() {
         unsafe {
             std::env::remove_var("HTTPS_PROXY");
             std::env::remove_var("https_proxy");
             std::env::set_var("ALL_PROXY", "http://proxy.local:8080");
         }
         assert_eq!(
-            proxy_from_env(),
+            proxy_from_env_vars(),
             Some("http://proxy.local:8080".to_string())
         );
         unsafe {
@@ -634,19 +679,19 @@ mod tests {
     }
 
     #[test]
-    fn proxy_from_env_ignores_socks() {
+    fn env_proxy_ignores_socks() {
         unsafe {
             std::env::remove_var("HTTPS_PROXY");
             std::env::set_var("ALL_PROXY", "socks5://127.0.0.1:10808");
         }
-        assert_eq!(proxy_from_env(), None);
+        assert_eq!(proxy_from_env_vars(), None);
         unsafe {
             std::env::remove_var("ALL_PROXY");
         }
     }
 
     #[test]
-    fn proxy_from_env_none_when_unset() {
+    fn env_proxy_none_when_unset() {
         unsafe {
             std::env::remove_var("HTTPS_PROXY");
             std::env::remove_var("https_proxy");
@@ -655,10 +700,11 @@ mod tests {
             std::env::remove_var("HTTP_PROXY");
             std::env::remove_var("http_proxy");
         }
-        assert_eq!(proxy_from_env(), None);
+        assert_eq!(proxy_from_env_vars(), None);
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn embedded_bundle_contains_121_certs() {
         let marker = b"-----BEGIN CERTIFICATE-----";
         let count = CACERT_BYTES
@@ -835,6 +881,9 @@ mod tests {
         )
         .unwrap();
         assert!(cred.has_username());
-        assert_eq!(cred.credtype(), CredentialType::USER_PASS_PLAINTEXT.bits());
+        assert_eq!(
+            cred.credtype(),
+            CredentialType::USER_PASS_PLAINTEXT.bits() as i32
+        );
     }
 }

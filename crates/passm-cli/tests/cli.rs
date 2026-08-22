@@ -128,8 +128,20 @@ fn decrypt_golden_blob_matches_fixture() {
 
     let original = std::fs::read(fixture("vault.plain.json")).expect("read fixture");
     let decrypted = std::fs::read(&out).expect("read decrypted");
+    // The committed blob holds LF line endings; git may check the plaintext
+    // fixture out with CRLF on Windows. Compare newline-normalized bytes.
+    let normalize = |bytes: &[u8]| -> Vec<u8> {
+        let mut out = Vec::with_capacity(bytes.len());
+        for &b in bytes {
+            if b != b'\r' {
+                out.push(b);
+            }
+        }
+        out
+    };
     assert_eq!(
-        decrypted, original,
+        normalize(&decrypted),
+        normalize(&original),
         "committed golden blob must decrypt to the committed plaintext fixture"
     );
 }

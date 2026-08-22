@@ -27,7 +27,7 @@ export function ConfirmButton({
         <button className="btn btn-danger btn-sm" onClick={onConfirm}>
           {confirmLabel}
         </button>
-        <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>
+        <button className="btn btn-sm" onClick={() => setConfirming(false)}>
           {cancelLabel}
         </button>
       </span>

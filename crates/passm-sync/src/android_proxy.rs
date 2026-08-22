@@ -9,8 +9,10 @@
 //! process-global that `git_repo::proxy_from_env` consults before falling back
 //! to the environment.
 
+#[cfg(target_os = "android")]
 use std::sync::OnceLock;
 
+#[cfg(target_os = "android")]
 static ANDROID_PROXY: OnceLock<Option<String>> = OnceLock::new();
 
 /// Registers the Android system HTTP proxy (host:port, no scheme) for use by

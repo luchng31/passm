@@ -295,6 +295,13 @@ mod tests {
     const KEY: [u8; 32] = [0x42; 32];
     const SALT: [u8; 32] = [0x42; 32];
 
+    /// Cross-platform `file://` URI for a local path (see git_repo::tests).
+    fn file_uri(dir: &Path) -> String {
+        let normalized = dir.to_string_lossy().replace('\\', "/");
+        let leading = if normalized.starts_with('/') { "" } else { "/" };
+        format!("file://{leading}{normalized}")
+    }
+
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         TEST_LOCK
             .lock()
@@ -304,7 +311,7 @@ mod tests {
     fn bare_remote(parent: &Path) -> (PathBuf, String) {
         let dir = parent.join("remote.git");
         Repository::init_bare(&dir).unwrap();
-        let url = format!("file://{}", dir.display());
+        let url = file_uri(&dir);
         (dir, url)
     }
 

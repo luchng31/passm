@@ -7,6 +7,11 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    watch: {
+      // cargo writes into target/ while vite dev runs; watching it crashes
+      // with EBUSY on Windows.
+      ignored: ['**/target/**', '**/dist/**'],
+    },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   test: {

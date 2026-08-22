@@ -67,9 +67,13 @@ export function App() {
       <div className="app">
         <Header />
         {error !== null && <div className="error banner">{error}</div>}
-        <main className={status.unlocked ? 'app-main' : 'app-main app-main--auth'}>
-          {status.unlocked ? <VaultList /> : <Unlock />}
-        </main>
+        {status.unlocked ? (
+          <VaultList />
+        ) : (
+          <main className="app-main">
+            <Unlock />
+          </main>
+        )}
       </div>
     </SessionContext.Provider>
   );

@@ -55,7 +55,7 @@ export function SyncStatus() {
 
   return (
     <>
-      <button className="btn btn-ghost btn-sm" onClick={() => void handleSync()} disabled={syncing}>
+      <button className="btn btn-sm" onClick={() => void handleSync()} disabled={syncing}>
         {syncing && <span className="spinner" aria-hidden="true" />}
         {syncing ? '同步中…' : '同步'}
       </button>

@@ -23,7 +23,7 @@ export function Header() {
         {error !== null && <span className="error">{error}</span>}
         {unlocked && <SyncStatus />}
         {unlocked && (
-          <button className="btn btn-ghost" onClick={() => void handleLock()}>
+          <button className="btn btn-sm" onClick={() => void handleLock()}>
             锁定
           </button>
         )}

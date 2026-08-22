@@ -1,8 +1,6 @@
 import { useState } from 'react';
-import { copy, create, deleteEntry, generatePassword, update } from '../lib/api';
+import { create, generatePassword, update } from '../lib/api';
 import type { Entry, EntryInput } from '../lib/api';
-import type { CopyField } from '../lib/copy';
-import { useCopyTimer } from '../lib/copy';
 import { ConfirmButton } from '../components/ConfirmButton';
 
 interface ItemEditorProps {
@@ -10,7 +8,9 @@ interface ItemEditorProps {
   entry: Entry | null;
   onSaved: (entry: Entry) => void;
   onCancel: () => void;
-  onDeleted: (id: string) => void;
+  /** Notify the workspace to delete this entry; the workspace owns the
+   * backend call and list-state update (single source of truth). */
+  onDelete: (id: string) => void;
 }
 
 function passwordStrength(pw: string): number {
@@ -24,7 +24,9 @@ function passwordStrength(pw: string): number {
   return Math.min(score, 4);
 }
 
-export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorProps) {
+const STRENGTH_TEXT = ['过短', '弱', '一般', '较强', '强'] as const;
+
+export function ItemEditor({ entry, onSaved, onCancel, onDelete }: ItemEditorProps) {
   const [title, setTitle] = useState(entry?.title ?? '');
   const [username, setUsername] = useState(entry?.username ?? '');
   const [password, setPassword] = useState(entry?.password ?? '');
@@ -33,7 +35,6 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { copiedField, copiedId, copyWithTimer } = useCopyTimer();
 
   const strength = passwordStrength(password);
   const strengthLevel = strength <= 1 ? 'weak' : strength === 2 ? 'medium' : 'strong';
@@ -54,25 +55,7 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
   const handleGenerate = async () => {
     try {
       setPassword(await generatePassword(16));
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const handleCopy = async (field: CopyField) => {
-    if (entry === null) return;
-    try {
-      await copy(field, entry.id);
-      copyWithTimer(field, entry.id);
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteEntry(id);
-      onDeleted(id);
+      setShowPassword(true);
     } catch (err) {
       setError(String(err));
     }
@@ -81,7 +64,7 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
   return (
     <div className="editor">
       <h2 className="editor-title">{entry === null ? '新建条目' : '编辑条目'}</h2>
-      {error !== null && <div className="error">{error}</div>}
+      {error !== null && <div className="error" style={{ marginBottom: 'var(--space-4)' }}>{error}</div>}
       <form
         className="editor-form"
         onSubmit={(e) => {
@@ -101,26 +84,29 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
           <span>密码</span>
           <div className="field-row">
             <input
-              className="input"
+              className="input input-mono"
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <button type="button" className="btn btn-ghost" onClick={() => setShowPassword((v) => !v)}>
+            <button type="button" className="btn" onClick={() => setShowPassword((v) => !v)}>
               {showPassword ? '隐藏' : '显示'}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={() => void handleGenerate()}>
-              生成密码
+            <button type="button" className="btn" onClick={() => void handleGenerate()}>
+              生成
             </button>
           </div>
           {password.length > 0 && (
-            <div className="strength" aria-hidden="true">
-              {[0, 1, 2, 3].map((i) => (
-                <span
-                  key={i}
-                  className={`strength-bar${i < strength ? ` is-${strengthLevel}` : ''}`}
-                />
-              ))}
+            <div aria-hidden="true">
+              <div className="strength">
+                {[0, 1, 2, 3].map((i) => (
+                  <span
+                    key={i}
+                    className={`strength-bar${i < strength ? ` is-${strengthLevel}` : ''}`}
+                  />
+                ))}
+              </div>
+              <span className="strength-text">强度：{STRENGTH_TEXT[strength]}</span>
             </div>
           )}
         </label>
@@ -132,32 +118,21 @@ export function ItemEditor({ entry, onSaved, onCancel, onDeleted }: ItemEditorPr
           <span>备注</span>
           <textarea className="input" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
-        {entry !== null && (
-          <div className="field">
-            <span>复制</span>
-            <div className="field-row">
-              <button type="button" className="btn btn-ghost" onClick={() => void handleCopy('password')}>
-                {copiedField === 'password' && copiedId === entry.id ? '已复制' : '复制密码'}
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => void handleCopy('username')}>
-                {copiedField === 'username' && copiedId === entry.id ? '已复制' : '复制用户名'}
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => void handleCopy('url')}>
-                {copiedField === 'url' && copiedId === entry.id ? '已复制' : '复制网址'}
-              </button>
-            </div>
-          </div>
-        )}
         <div className="editor-actions">
           <button type="submit" className="btn btn-primary" disabled={saving}>
             {saving && <span className="spinner" aria-hidden="true" />}
             {saving ? '保存中…' : '保存'}
           </button>
-          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={saving}>
+          <button type="button" className="btn" onClick={onCancel} disabled={saving}>
             取消
           </button>
+          <span className="spacer" />
           {entry !== null && (
-            <ConfirmButton label="删除" onConfirm={() => void handleDelete(entry.id)} />
+            <ConfirmButton
+              label="删除"
+              className="btn btn-danger btn-sm"
+              onConfirm={() => onDelete(entry.id)}
+            />
           )}
         </div>
       </form>

@@ -39,7 +39,7 @@ describe('Unlock', () => {
 
   it('shows the sync config form when sync is not configured', async () => {
     renderUnlock();
-    expect(await screen.findByText('首次使用')).toBeInTheDocument();
+    expect(await screen.findByText('连接同步仓库')).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/GitHub 仓库地址/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/个人访问令牌/)).toBeInTheDocument();
   });

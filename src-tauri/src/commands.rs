@@ -184,10 +184,7 @@ pub fn unlock_vault(password: &str, blob: &[u8]) -> Result<(Vault, [u8; 32]), Co
 /// Decrypts a vault blob with an already-derived vault key (no password
 /// derivation). Used to reload the session vault after a sync rewrote the
 /// on-disk blob, so the in-memory `list()` view matches the synced file.
-pub fn decrypt_vault_with_key(
-    vault_key: &[u8; 32],
-    blob: &[u8],
-) -> Result<Vault, CommandError> {
+pub fn decrypt_vault_with_key(vault_key: &[u8; 32], blob: &[u8]) -> Result<Vault, CommandError> {
     let plaintext = envelope::decrypt(vault_key, blob).map_err(|e| match e {
         envelope::EnvelopeError::AuthenticationFailed => CommandError::WrongPassword,
         other => CommandError::Envelope(other),
